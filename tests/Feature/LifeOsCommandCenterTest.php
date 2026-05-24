@@ -60,6 +60,47 @@ class LifeOsCommandCenterTest extends TestCase
         $this->actingAs($user)->get(route('portfolios.index'))->assertOk();
     }
 
+    public function test_portfolio_index_exposes_work_metrics(): void
+    {
+        [$user, $workspace, , $area, $portfolio, $project] = $this->context();
+
+        Task::create([
+            'workspace_id' => $workspace->id,
+            'area_id' => $area->id,
+            'portfolio_id' => $portfolio->id,
+            'project_id' => $project->id,
+            'title' => 'Open overdue portfolio task',
+            'status' => 'todo',
+            'priority' => 'high',
+            'reporter_id' => $user->id,
+            'due_date' => now()->subDay()->toDateString(),
+        ]);
+
+        Task::create([
+            'workspace_id' => $workspace->id,
+            'area_id' => $area->id,
+            'portfolio_id' => $portfolio->id,
+            'project_id' => $project->id,
+            'title' => 'Completed portfolio task',
+            'status' => 'completed',
+            'priority' => 'medium',
+            'reporter_id' => $user->id,
+            'due_date' => now()->toDateString(),
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('portfolios.index'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('Portfolios/Index')
+                ->where('areas.0.portfolios.0.total_projects_count', 1)
+                ->where('areas.0.portfolios.0.open_tasks_count', 1)
+                ->where('areas.0.portfolios.0.completed_tasks_count', 1)
+                ->where('areas.0.portfolios.0.overdue_tasks_count', 1)
+                ->where('areas.0.portfolios.0.progress_percentage', 50)
+            );
+    }
+
     public function test_portfolio_show_groups_tasks(): void
     {
         [$user, $workspace, , $area, $portfolio, $project] = $this->context();

@@ -2,7 +2,7 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { useState } from 'react';
 import { priorityLabels, statusLabels } from './Partials/TaskForm';
-import { Avatar, Badge, MetadataItem, Panel, primaryButton, secondaryButton, priorityTone, statusTone } from '@/Components/Ui';
+import { Avatar, Badge, DueDate, EmptyState, MetadataItem, Panel, inputClass, primaryButton, secondaryButton, priorityTone, statusTone } from '@/Components/Ui';
 
 function DetailCard({ label, value }) {
     return (
@@ -57,14 +57,14 @@ function CommentThread({ task }) {
                     disabled={Boolean(editingId)}
                     rows="3"
                     placeholder="Add a comment..."
-                    className="block w-full rounded-md border-slate-300 text-sm shadow-sm focus:border-slate-500 focus:ring-slate-500 disabled:bg-slate-50"
+                    className={`${inputClass} block w-full`}
                 />
                 {errors.body && <div className="mt-2 text-sm text-rose-600">{errors.body}</div>}
                 <div className="mt-3 flex justify-end">
                     <button
                         type="submit"
                         disabled={processing || Boolean(editingId)}
-                    className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50"
+                        className={primaryButton}
                     >
                         Add Comment
                     </button>
@@ -73,14 +73,12 @@ function CommentThread({ task }) {
 
             <div className="divide-y divide-slate-100">
                 {task.comments.length === 0 ? (
-                    <div className="p-5 text-sm text-slate-500">No comments yet.</div>
+                    <EmptyState title="No comments yet" description="Start the thread with an update, question, or decision note." />
                 ) : (
                     task.comments.map((comment) => (
                         <div key={comment.id} className="p-5">
                             <div className="flex items-start gap-3">
-                                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-sm font-bold text-emerald-800 ring-1 ring-emerald-200">
-                                    {(comment.user?.name ?? 'U').charAt(0).toUpperCase()}
-                                </span>
+                                <Avatar name={comment.user?.name ?? 'Unknown user'} />
                                 <div className="min-w-0 flex-1">
                                     <div className="flex flex-wrap items-center gap-2">
                                         <span className="text-sm font-semibold text-slate-950">
@@ -95,13 +93,13 @@ function CommentThread({ task }) {
                                                 value={data.body}
                                                 onChange={(event) => setData('body', event.target.value)}
                                                 rows="3"
-                                                className="block w-full rounded-md border-slate-300 text-sm shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                                                className={`${inputClass} block w-full`}
                                             />
                                             <div className="flex gap-2">
                                                 <button
                                                     type="button"
                                                     onClick={() => saveEdit(comment)}
-                                                    className="rounded-md bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white"
+                                                    className={primaryButton}
                                                 >
                                                     Save
                                                 </button>
@@ -111,7 +109,7 @@ function CommentThread({ task }) {
                                                         setEditingId(null);
                                                         reset('body');
                                                     }}
-                                                    className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700"
+                                                    className={secondaryButton}
                                                 >
                                                     Cancel
                                                 </button>
@@ -161,7 +159,7 @@ function ActivityTimeline({ activities }) {
 
             <div className="divide-y divide-slate-100">
                 {activities.length === 0 ? (
-                    <div className="p-5 text-sm text-slate-500">No activity yet.</div>
+                    <EmptyState title="No activity yet" description="Status, priority, assignee, and due-date changes will appear here." />
                 ) : (
                     activities.map((activity) => (
                         <div key={activity.id} className="p-4">
@@ -236,12 +234,12 @@ function AttachmentsSection({ task }) {
                     <input
                         type="file"
                         onChange={(event) => setData('file', event.target.files[0])}
-                        className="block w-full rounded-md border border-slate-300 text-sm text-slate-600 file:mr-4 file:border-0 file:bg-slate-950 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+                        className="block w-full rounded-xl border border-slate-200 bg-white text-sm text-slate-600 shadow-sm shadow-slate-200/60 file:mr-4 file:border-0 file:bg-slate-950 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-white focus:border-emerald-500 focus:ring-emerald-500/30"
                     />
                     <button
                         type="submit"
                         disabled={processing || !data.file}
-                        className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50"
+                        className={primaryButton}
                     >
                         Upload
                     </button>
@@ -254,7 +252,7 @@ function AttachmentsSection({ task }) {
 
             <div className="divide-y divide-slate-100">
                 {task.attachments.length === 0 ? (
-                    <div className="p-5 text-sm text-slate-500">No attachments yet.</div>
+                    <EmptyState title="No attachments yet" description="Attach briefs, screenshots, contracts, or working files." />
                 ) : (
                     task.attachments.map((attachment) => (
                         <div key={attachment.id} className="flex flex-col gap-3 p-5 lg:flex-row lg:items-center lg:justify-between">
@@ -271,7 +269,7 @@ function AttachmentsSection({ task }) {
                             <div className="flex gap-2">
                                 <a
                                     href={attachment.download_url}
-                                    className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+                                    className={secondaryButton}
                                 >
                                     Download
                                 </a>
@@ -279,7 +277,7 @@ function AttachmentsSection({ task }) {
                                     <button
                                         type="button"
                                         onClick={() => router.delete(route('task-attachments.destroy', attachment.id), { preserveScroll: true })}
-                                        className="rounded-md bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-100 transition hover:bg-rose-100"
+                                        className="inline-flex items-center justify-center rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 ring-1 ring-rose-100 transition hover:bg-rose-100"
                                     >
                                         Delete
                                     </button>
@@ -312,7 +310,7 @@ function CustomFieldsSection({ task, customFields }) {
             </div>
 
             {customFields.length === 0 ? (
-                <div className="p-5 text-sm text-slate-500">No task custom fields have been configured yet.</div>
+                <EmptyState title="No custom fields" description="Workspace-specific task metadata will appear here once configured." />
             ) : (
                 <form onSubmit={submit} className="space-y-4 p-5">
                     <div className="grid gap-4 md:grid-cols-2">
@@ -323,7 +321,7 @@ function CustomFieldsSection({ task, customFields }) {
                                     <select
                                         value={data.values[field.id] ?? ''}
                                         onChange={(event) => setData('values', { ...data.values, [field.id]: event.target.value })}
-                                        className="mt-2 block w-full rounded-md border-slate-300 text-sm shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                                        className={`${inputClass} mt-2 block w-full`}
                                     >
                                         <option value="">Not set</option>
                                         {field.options.map((option) => (
@@ -334,7 +332,7 @@ function CustomFieldsSection({ task, customFields }) {
                                     <select
                                         value={data.values[field.id] ?? ''}
                                         onChange={(event) => setData('values', { ...data.values, [field.id]: event.target.value })}
-                                        className="mt-2 block w-full rounded-md border-slate-300 text-sm shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                                        className={`${inputClass} mt-2 block w-full`}
                                     >
                                         <option value="">Not set</option>
                                         <option value="1">Yes</option>
@@ -345,7 +343,7 @@ function CustomFieldsSection({ task, customFields }) {
                                         type={field.field_type === 'date' ? 'date' : field.field_type === 'number' ? 'number' : 'text'}
                                         value={data.values[field.id] ?? ''}
                                         onChange={(event) => setData('values', { ...data.values, [field.id]: event.target.value })}
-                                        className="mt-2 block w-full rounded-md border-slate-300 text-sm shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                                        className={`${inputClass} mt-2 block w-full`}
                                     />
                                 )}
                                 {errors[`values.${field.id}`] && (
@@ -358,7 +356,7 @@ function CustomFieldsSection({ task, customFields }) {
                         <button
                             type="submit"
                             disabled={processing}
-                            className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-50"
+                            className={primaryButton}
                         >
                             Save Custom Fields
                         </button>
@@ -380,7 +378,7 @@ export default function Show({ task, customFields = [] }) {
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
                 <main className="space-y-5">
                     <Panel className="overflow-hidden">
-                        <div className="bg-gradient-to-br from-white via-slate-50 to-violet-50/70 p-6">
+                        <div className="bg-[radial-gradient(circle_at_top_left,_rgba(139,92,246,0.12),_transparent_30%),linear-gradient(135deg,_#ffffff,_#f8fafc_58%,_#f5f3ff)] p-6 sm:p-8">
                             <div className="flex flex-wrap gap-2">
                                 <Badge tone={statusTone[task.status]}>{statusLabels[task.status]}</Badge>
                                 <Badge tone={priorityTone[task.priority]}>{priorityLabels[task.priority]}</Badge>
@@ -439,7 +437,7 @@ export default function Show({ task, customFields = [] }) {
                             <MetadataItem label="Portfolio" value={task.portfolio?.name ?? 'No portfolio'} />
                             <MetadataItem label="Task type" value={task.task_type ? task.task_type.replace('_', ' ') : 'Task'} />
                             <MetadataItem label="Start date" value={task.start_date ?? 'Not set'} />
-                            <MetadataItem label="Due date" value={task.due_date ?? 'Not set'} />
+                            <MetadataItem label="Due date"><DueDate date={task.due_date} status={task.status} /></MetadataItem>
                             <MetadataItem label="Section" value={task.section ?? 'No section'} />
                         </div>
                     </Panel>

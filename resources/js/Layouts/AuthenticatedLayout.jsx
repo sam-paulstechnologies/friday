@@ -1,8 +1,8 @@
 import ApplicationLogo from '@/Components/ApplicationLogo';
 import Dropdown from '@/Components/Dropdown';
-import { Link, usePage } from '@inertiajs/react';
+import { Link, router, usePage } from '@inertiajs/react';
 import { useEffect, useState } from 'react';
-import { primaryButton } from '@/Components/Ui';
+import { primaryButton, secondaryButton } from '@/Components/Ui';
 
 const groups = [
     {
@@ -45,7 +45,7 @@ const groups = [
 ];
 
 function NavIcon({ type, active }) {
-    const base = active ? 'border-white/20 bg-white/15' : 'border-slate-200 bg-white group-hover:border-slate-300';
+    const base = active ? 'border-white/20 bg-white/15 text-white' : 'border-slate-200 bg-white text-slate-500 group-hover:border-slate-300 group-hover:text-slate-900';
 
     return (
         <span className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${base}`}>
@@ -68,9 +68,9 @@ function SidebarLink({ item, onClick }) {
         <Link
             href={item.href}
             onClick={onClick}
-            className={`group flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition ${
+            className={`group flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm font-semibold transition duration-200 ${
                 item.active
-                    ? 'bg-slate-950 text-white shadow-md shadow-slate-300/60'
+                    ? 'bg-slate-950 text-white shadow-md shadow-slate-300/70'
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'
             }`}
         >
@@ -85,6 +85,15 @@ export default function AuthenticatedLayout({ title = 'Dashboard', subtitle, chi
     const user = page.props.auth.user;
     const unreadCount = page.props.notifications?.unread_count ?? 0;
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [search, setSearch] = useState('');
+
+    const submitSearch = (event) => {
+        event.preventDefault();
+
+        if (search.trim()) {
+            router.get(route('tasks.index'), { search: search.trim() });
+        }
+    };
 
     useEffect(() => {
         setSidebarOpen(false);
@@ -104,7 +113,7 @@ export default function AuthenticatedLayout({ title = 'Dashboard', subtitle, chi
     }, []);
 
     return (
-        <div className="min-h-screen bg-[#f7f8fb] text-slate-950">
+        <div className="min-h-screen bg-[#f6f7fb] text-slate-950">
             {sidebarOpen && (
                 <button
                     type="button"
@@ -114,27 +123,27 @@ export default function AuthenticatedLayout({ title = 'Dashboard', subtitle, chi
                 />
             )}
 
-            <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[82vw] flex-col border-r border-slate-200 bg-white transition-transform lg:w-80 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-                <div className="border-b border-slate-200 p-4">
+            <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[86vw] flex-col border-r border-slate-200/80 bg-white/95 shadow-2xl shadow-slate-950/10 backdrop-blur transition-transform duration-300 lg:w-80 lg:translate-x-0 lg:shadow-none ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+                <div className="border-b border-slate-200/80 p-4">
                     <div className="flex items-center gap-3">
                         <ApplicationLogo />
                         <div className="min-w-0">
-                            <div className="truncate text-sm font-bold text-slate-950">Friday</div>
-                            <div className="truncate text-xs font-medium text-slate-500">Work operating system</div>
+                            <div className="truncate text-sm font-bold text-slate-950">Miriam</div>
+                            <div className="truncate text-xs font-medium text-slate-500">Friday work OS</div>
                         </div>
                     </div>
-                    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="mt-4 rounded-3xl border border-slate-200/80 bg-gradient-to-br from-slate-50 to-emerald-50/50 p-3">
                         <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
                                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Workspace</div>
-                                <div className="mt-1 truncate text-sm font-bold text-slate-950">Friday Workspace</div>
+                                <div className="mt-1 truncate text-sm font-bold text-slate-950">Miriam Workspace</div>
                             </div>
-                            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white text-xs font-bold text-slate-600 ring-1 ring-slate-200">F</span>
+                            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white text-xs font-bold text-emerald-700 ring-1 ring-emerald-100">M</span>
                         </div>
                     </div>
                 </div>
 
-                <nav className="flex-1 overflow-y-auto px-3 py-4">
+                <nav className="premium-scrollbar flex-1 overflow-y-auto px-3 py-4">
                     {groups.map((group) => (
                         <div key={group.label} className="mb-5">
                             <div className="px-3 pb-2 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
@@ -149,20 +158,21 @@ export default function AuthenticatedLayout({ title = 'Dashboard', subtitle, chi
                     ))}
                 </nav>
 
-                <div className="border-t border-slate-200 p-4">
+                <div className="border-t border-slate-200/80 p-4">
                     <Link href={route('tasks.create')} className={`${primaryButton} w-full`}>
+                        <span aria-hidden="true">+</span>
                         New Task
                     </Link>
                 </div>
             </aside>
 
             <div className="lg:pl-80">
-                <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
+                <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/85 backdrop-blur-xl">
                     <div className="flex min-h-20 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
                         <div className="flex min-w-0 items-center gap-3">
                             <button
                                 type="button"
-                                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm lg:hidden"
+                                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 lg:hidden"
                                 onClick={() => setSidebarOpen(true)}
                             >
                                 <span className="sr-only">Open navigation</span>
@@ -174,11 +184,25 @@ export default function AuthenticatedLayout({ title = 'Dashboard', subtitle, chi
                             </div>
                         </div>
 
+                        <form onSubmit={submitSearch} className="hidden min-w-0 flex-1 justify-center px-6 xl:flex">
+                            <label className="relative w-full max-w-lg">
+                                <span className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 border-slate-400 after:absolute after:-bottom-1 after:-right-1 after:h-1.5 after:w-0.5 after:rotate-[-45deg] after:rounded-full after:bg-slate-400" />
+                                <input
+                                    type="search"
+                                    value={search}
+                                    onChange={(event) => setSearch(event.target.value)}
+                                    placeholder="Search tasks"
+                                    className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50/80 pl-11 pr-4 text-sm font-medium text-slate-800 shadow-inner shadow-slate-200/50 transition placeholder:text-slate-400 hover:bg-white focus:border-emerald-500 focus:bg-white focus:ring-emerald-500/30"
+                                />
+                            </label>
+                        </form>
+
                         <div className="flex items-center gap-2 sm:gap-3">
-                            <Link href={route('projects.create')} className="hidden rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 md:inline-flex">
+                            <Link href={route('projects.create')} className={`${secondaryButton} hidden md:inline-flex`}>
+                                <span aria-hidden="true">+</span>
                                 New Project
                             </Link>
-                            <Link href={route('notifications.index')} className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50">
+                            <Link href={route('notifications.index')} className="relative inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50">
                                 <span className="h-5 w-4 rounded-t-full border-2 border-slate-500 border-b-0 after:mx-auto after:mt-4 after:block after:h-1 after:w-1 after:rounded-full after:bg-slate-500" />
                                 {unreadCount > 0 && (
                                     <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-rose-600 px-1.5 py-0.5 text-center text-[11px] font-bold text-white">{unreadCount}</span>
@@ -187,8 +211,8 @@ export default function AuthenticatedLayout({ title = 'Dashboard', subtitle, chi
 
                             <Dropdown>
                                 <Dropdown.Trigger>
-                                    <button type="button" className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50">
-                                        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-100 text-xs font-bold text-emerald-800 ring-1 ring-emerald-200">
+                                    <button type="button" className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50">
+                                        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-100 to-cyan-100 text-xs font-bold text-emerald-800 ring-1 ring-emerald-200">
                                             {user.name.charAt(0).toUpperCase()}
                                         </span>
                                         <span className="hidden max-w-32 truncate sm:block">{user.name}</span>

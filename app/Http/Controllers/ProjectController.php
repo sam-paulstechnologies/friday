@@ -23,6 +23,10 @@ class ProjectController extends Controller
 
         $projects = Project::query()
             ->with(['workspace:id,name', 'team:id,name', 'owner:id,name', 'area:id,name,color', 'portfolio:id,name'])
+            ->withCount([
+                'tasks as open_tasks_count' => fn ($query) => $query->active(),
+                'tasks as completed_tasks_count' => fn ($query) => $query->where('status', 'completed'),
+            ])
             ->when($filters['search'] ?? null, function ($query, string $search): void {
                 $query->where(function ($query) use ($search): void {
                     $query->where('name', 'like', "%{$search}%")
@@ -200,6 +204,8 @@ class ProjectController extends Controller
                 'id' => $project->owner->id,
                 'name' => $project->owner->name,
             ] : null,
+            'open_tasks_count' => $project->open_tasks_count ?? null,
+            'completed_tasks_count' => $project->completed_tasks_count ?? null,
         ];
     }
 

@@ -1,3 +1,41 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+    :root {
+        color-scheme: light;
+    }
+
+    html {
+        scroll-behavior: smooth;
+    }
+
+    body {
+        @apply bg-[#f6f7fb] text-slate-950 antialiased;
+    }
+
+    ::selection {
+        @apply bg-emerald-100 text-emerald-950;
+    }
+}
+
+@layer components {
+    .premium-scrollbar {
+        scrollbar-width: thin;
+        scrollbar-color: theme('colors.slate.300') transparent;
+    }
+
+    .premium-scrollbar::-webkit-scrollbar {
+        height: 10px;
+        width: 10px;
+    }
+
+    .premium-scrollbar::-webkit-scrollbar-thumb {
+        @apply rounded-full bg-slate-300;
+    }
+
+    .premium-scrollbar::-webkit-scrollbar-track {
+        @apply bg-transparent;
+    }
+}

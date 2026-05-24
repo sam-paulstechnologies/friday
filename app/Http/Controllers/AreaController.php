@@ -32,7 +32,15 @@ class AreaController extends Controller
     public function show(Area $area): Response
     {
         $area->load([
-            'portfolios' => fn ($query) => $query->withCount(['projects', 'tasks'])->orderBy('position'),
+            'portfolios' => fn ($query) => $query
+                ->withCount([
+                    'projects as total_projects_count',
+                    'tasks as total_tasks_count',
+                    'tasks as open_tasks_count' => fn ($query) => $query->active(),
+                    'tasks as completed_tasks_count' => fn ($query) => $query->where('status', 'completed'),
+                    'tasks as overdue_tasks_count' => fn ($query) => $query->active()->overdue(),
+                ])
+                ->orderBy('position'),
             'projects' => fn ($query) => $query->with(['portfolio:id,name', 'owner:id,name'])->active()->orderBy('sort_order')->latest(),
         ]);
 
@@ -51,8 +59,13 @@ class AreaController extends Controller
                 'name' => $portfolio->name,
                 'slug' => $portfolio->slug,
                 'status' => $portfolio->status,
-                'project_count' => $portfolio->projects_count,
-                'task_count' => $portfolio->tasks_count,
+                'project_count' => $portfolio->total_projects_count,
+                'task_count' => $portfolio->total_tasks_count,
+                'total_projects_count' => $portfolio->total_projects_count,
+                'total_tasks_count' => $portfolio->total_tasks_count,
+                'open_tasks_count' => $portfolio->open_tasks_count,
+                'completed_tasks_count' => $portfolio->completed_tasks_count,
+                'overdue_tasks_count' => $portfolio->overdue_tasks_count,
             ]),
             'projects' => $area->projects->map(fn ($project) => [
                 'id' => $project->id,

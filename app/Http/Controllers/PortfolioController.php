@@ -13,7 +13,9 @@ class PortfolioController extends Controller
     public function index(): Response
     {
         $areas = Area::query()
-            ->with(['portfolios' => fn ($query) => $query->withCount(['projects', 'tasks'])->orderBy('position')])
+            ->with(['portfolios' => fn ($query) => $query
+                ->withCount($this->portfolioCountQueries())
+                ->orderBy('position')])
             ->orderBy('position')
             ->get()
             ->map(fn (Area $area) => [
@@ -33,7 +35,7 @@ class PortfolioController extends Controller
         $portfolio->load([
             'area:id,name,color',
             'projects' => fn ($query) => $query->with(['owner:id,name'])->active()->orderBy('sort_order')->latest(),
-        ]);
+        ])->loadCount($this->portfolioCountQueries());
 
         $tasks = Task::query()
             ->with(['workspace:id,name', 'project:id,name', 'area:id,name', 'assignee:id,name'])
@@ -62,6 +64,10 @@ class PortfolioController extends Controller
 
     private function portfolioResource(Portfolio $portfolio): array
     {
+        $openTasks = (int) ($portfolio->open_tasks_count ?? 0);
+        $completedTasks = (int) ($portfolio->completed_tasks_count ?? 0);
+        $totalProgressTasks = $openTasks + $completedTasks;
+
         return [
             'id' => $portfolio->id,
             'name' => $portfolio->name,
@@ -70,8 +76,27 @@ class PortfolioController extends Controller
             'color' => $portfolio->color,
             'icon' => $portfolio->icon,
             'status' => $portfolio->status,
-            'project_count' => $portfolio->projects_count ?? null,
-            'task_count' => $portfolio->tasks_count ?? null,
+            'project_count' => $portfolio->total_projects_count ?? $portfolio->projects_count ?? 0,
+            'task_count' => $portfolio->total_tasks_count ?? $portfolio->tasks_count ?? 0,
+            'total_projects_count' => $portfolio->total_projects_count ?? $portfolio->projects_count ?? 0,
+            'total_tasks_count' => $portfolio->total_tasks_count ?? $portfolio->tasks_count ?? 0,
+            'open_tasks_count' => $openTasks,
+            'completed_tasks_count' => $completedTasks,
+            'overdue_tasks_count' => $portfolio->overdue_tasks_count ?? 0,
+            'progress_percentage' => $totalProgressTasks > 0
+                ? (int) round(($completedTasks / $totalProgressTasks) * 100)
+                : null,
+        ];
+    }
+
+    private function portfolioCountQueries(): array
+    {
+        return [
+            'projects as total_projects_count',
+            'tasks as total_tasks_count',
+            'tasks as open_tasks_count' => fn ($query) => $query->active(),
+            'tasks as completed_tasks_count' => fn ($query) => $query->where('status', 'completed'),
+            'tasks as overdue_tasks_count' => fn ($query) => $query->active()->overdue(),
         ];
     }
 

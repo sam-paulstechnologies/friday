@@ -36,9 +36,13 @@ export default function ObjectIndex({ title, subtitle, routeBase, closeLabel = '
         <AuthenticatedLayout title={title} subtitle={subtitle}>
             <Head title={title} />
             <div className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
-                <Panel className="p-5">
-                    <h2 className="text-lg font-bold text-slate-950">Create {title.slice(0, -1)}</h2>
-                    <form onSubmit={submit} className="mt-5 space-y-4">
+                <Panel className="overflow-hidden">
+                    <div className="border-b border-slate-100 bg-gradient-to-br from-white via-slate-50 to-emerald-50/60 p-5">
+                        <Badge tone="bg-emerald-50 text-emerald-700 ring-emerald-100">Command object</Badge>
+                        <h2 className="mt-3 text-lg font-bold text-slate-950">Create {title.slice(0, -1)}</h2>
+                        <p className="mt-1 text-sm text-slate-500">Capture ownership, context, and the related work item.</p>
+                    </div>
+                    <form onSubmit={submit} className="space-y-4 p-5">
                         <Field label="Title" error={errors.title}>
                             <input value={data.title} onChange={(event) => setData('title', event.target.value)} className={`${inputClass} w-full`} />
                         </Field>
@@ -60,7 +64,7 @@ export default function ObjectIndex({ title, subtitle, routeBase, closeLabel = '
                         {fields.includes('probability') && <OptionField label="Probability" value={data.probability} onChange={(value) => setData('probability', value)} values={['low', 'medium', 'high']} />}
                         {fields.includes('mitigation') && <Field label="Mitigation"><textarea value={data.mitigation} onChange={(event) => setData('mitigation', event.target.value)} rows="2" className={`${inputClass} w-full`} /></Field>}
                         {fields.includes('requested_by') && <Field label="Requested by"><input value={data.requested_by} onChange={(event) => setData('requested_by', event.target.value)} className={`${inputClass} w-full`} /></Field>}
-                        <button type="submit" disabled={processing} className={primaryButton}>Create</button>
+                        <button type="submit" disabled={processing} className={`${primaryButton} w-full`}>Create</button>
                     </form>
                 </Panel>
 
@@ -75,16 +79,19 @@ export default function ObjectIndex({ title, subtitle, routeBase, closeLabel = '
 
 function ObjectList({ title, routeBase, closeLabel, reject, items, secondary = false }) {
     return (
-        <Panel>
+        <Panel className="overflow-hidden">
             <div className="border-b border-slate-100 px-5 py-4">
-                <h3 className="font-bold text-slate-950">{title}</h3>
+                <div className="flex items-center justify-between gap-3">
+                    <h3 className="font-bold text-slate-950">{title}</h3>
+                    <Badge>{items.length}</Badge>
+                </div>
             </div>
             {items.length === 0 ? <EmptyState title={`No ${title.toLowerCase()} items`} /> : (
                 <div className="divide-y divide-slate-100">
                     {items.map((item) => (
-                        <div key={item.id} className="px-5 py-4">
+                        <div key={item.id} className={`px-5 py-4 transition hover:bg-slate-50 ${secondary ? 'bg-slate-50/50' : 'bg-white'}`}>
                             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                                <div>
+                                <div className="min-w-0">
                                     <div className="font-semibold text-slate-950">{item.title}</div>
                                     <p className="mt-1 text-sm leading-6 text-slate-500">{item.description || 'No description'}</p>
                                     <div className="mt-2 flex flex-wrap gap-2">
@@ -92,7 +99,7 @@ function ObjectList({ title, routeBase, closeLabel, reject, items, secondary = f
                                         {item.area && <Badge>{item.area.name}</Badge>}
                                         {item.portfolio && <Badge>{item.portfolio.name}</Badge>}
                                         {item.project && <Badge>{item.project.name}</Badge>}
-                                        {item.task && <Link href={route('tasks.show', item.task.id)} className="text-xs font-semibold text-slate-600 underline">{item.task.title}</Link>}
+                                        {item.task && <Link href={route('tasks.show', item.task.id)} className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-white">{item.task.title}</Link>}
                                     </div>
                                 </div>
                                 {!secondary && (

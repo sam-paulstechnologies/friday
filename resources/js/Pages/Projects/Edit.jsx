@@ -7,7 +7,7 @@ export default function Edit({ project, workspaces, teams, statuses, visibilitie
         <AuthenticatedLayout title="Edit Project" subtitle={project.name}>
             <Head title={`Edit ${project.name}`} />
 
-            <div className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/70 sm:p-6">
                 <ProjectForm
                     project={project}
                     workspaces={workspaces}

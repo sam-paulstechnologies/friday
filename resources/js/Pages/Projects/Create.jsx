@@ -7,7 +7,7 @@ export default function Create({ workspaces, teams, statuses, visibilities }) {
         <AuthenticatedLayout title="Create Project" subtitle="Set up a project shell for future task planning.">
             <Head title="Create Project" />
 
-            <div className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/70 sm:p-6">
                 <ProjectForm
                     workspaces={workspaces}
                     teams={teams}

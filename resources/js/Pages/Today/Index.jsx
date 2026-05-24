@@ -1,4 +1,4 @@
-import { Badge, EmptyState, Panel, PageSection, primaryButton, secondaryButton, priorityTone, statusTone } from '@/Components/Ui';
+import { Badge, DueDate, EmptyState, Panel, PageSection, inputClass, primaryButton, secondaryButton, priorityTone, statusTone } from '@/Components/Ui';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, router, useForm } from '@inertiajs/react';
 
@@ -42,8 +42,8 @@ const typeLabels = {
 
 function SummaryCard({ label, value, tone }) {
     return (
-        <Panel className="p-5">
-            <div className="text-sm font-semibold text-slate-500">{label}</div>
+        <Panel className="p-5 transition duration-200 hover:-translate-y-0.5 hover:shadow-md hover:shadow-slate-200/70">
+            <div className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</div>
             <div className={`mt-3 text-3xl font-bold tracking-tight ${tone}`}>{value}</div>
         </Panel>
     );
@@ -61,14 +61,14 @@ function TaskNoteForm({ task }) {
     };
 
     return (
-        <form onSubmit={submit} className="mt-3 flex gap-2">
+        <form onSubmit={submit} className="mt-4 flex flex-col gap-2 sm:flex-row">
             <input
                 value={data.body}
                 onChange={(event) => setData('body', event.target.value)}
                 placeholder="Add a note..."
-                className="min-w-0 flex-1 rounded-xl border-slate-300 text-sm shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                className={`${inputClass} min-w-0 flex-1`}
             />
-            <button type="submit" disabled={processing || !data.body} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm disabled:opacity-50">
+            <button type="submit" disabled={processing || !data.body} className={secondaryButton}>
                 Note
             </button>
         </form>
@@ -77,18 +77,18 @@ function TaskNoteForm({ task }) {
 
 function TaskRow({ task }) {
     return (
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/60">
+        <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0">
                     <Link href={route('tasks.show', task.id)} className="font-bold text-slate-950 hover:text-slate-700">
                         {task.title}
                     </Link>
-                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                         <span>{task.project?.name ?? 'No project'}</span>
                         <span>{task.workspace?.name ?? 'No workspace'}</span>
                         <span>{task.area?.name ?? 'No area'}</span>
                         <span>{task.portfolio?.name ?? 'No portfolio'}</span>
-                        <span>{task.due_date ?? 'No due date'}</span>
+                        <DueDate date={task.due_date} status={task.status} />
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                         <Badge tone={statusTone[task.status]}>{statusLabels[task.status] ?? task.status}</Badge>
@@ -117,7 +117,7 @@ function TaskSection({ title, tasks }) {
     return (
         <PageSection title={title} description={`${tasks.length} task(s)`}>
             {tasks.length === 0 ? (
-                <div className="p-5 text-sm text-slate-500">Nothing in this section.</div>
+                <EmptyState title="Nothing in this section" description="Tasks will appear here when they match this daily planning bucket." />
             ) : (
                 <div className="space-y-3 p-4">
                     {tasks.map((task) => <TaskRow key={task.id} task={task} />)}
@@ -136,7 +136,7 @@ export default function Index({ groups, focus, summary }) {
 
             <div className="space-y-6">
                 <Panel className="overflow-hidden">
-                    <div className="bg-gradient-to-br from-white via-slate-50 to-emerald-50/70 p-6">
+                    <div className="bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.14),_transparent_30%),linear-gradient(135deg,_#ffffff,_#f8fafc_58%,_#ecfeff)] p-6 sm:p-8">
                         <Badge tone="bg-emerald-50 text-emerald-700 ring-emerald-100">Daily Execution System</Badge>
                         <h2 className="mt-4 text-3xl font-bold tracking-tight text-slate-950">Today Command Center</h2>
                         <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">

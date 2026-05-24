@@ -1,4 +1,4 @@
-import { Badge, EmptyState, Toolbar, inputClass, primaryButton, priorityTone, statusTone } from '@/Components/Ui';
+import { Avatar, Badge, DueDate, EmptyState, Toolbar, inputClass, primaryButton, priorityTone, statusTone } from '@/Components/Ui';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, router } from '@inertiajs/react';
 import { useEffect, useMemo, useState } from 'react';
@@ -14,12 +14,12 @@ function dateBucket(task) {
 
 function TaskRow({ task }) {
     return (
-        <Link href={route('tasks.show', task.id)} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/60 transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md lg:grid-cols-[1fr_140px_120px_150px] lg:items-center">
+        <Link href={route('tasks.show', task.id)} className={`group grid gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md lg:grid-cols-[1fr_140px_170px_120px_130px] lg:items-center ${task.status === 'completed' ? 'bg-slate-50/80' : ''}`}>
             <div className="min-w-0">
                 <div className="flex items-start gap-3">
                     <span className={`mt-1 h-4 w-4 rounded-full border-2 ${task.status === 'completed' ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white'}`} />
                     <div className="min-w-0">
-                        <div className="truncate font-semibold text-slate-950">{task.title}</div>
+                        <div className={`truncate font-semibold text-slate-950 ${task.status === 'completed' ? 'text-slate-500 line-through decoration-slate-300' : ''}`}>{task.title}</div>
                         <div className="mt-1 truncate text-sm text-slate-500">
                             {task.project?.name ?? task.section ?? 'No project'}
                             {task.area?.name ? ` / ${task.area.name}` : ''}
@@ -33,7 +33,8 @@ function TaskRow({ task }) {
                 <Badge tone={priorityTone[task.priority]}>{priorityLabels[task.priority]}</Badge>
                 {task.task_type && <Badge>{task.task_type.replace('_', ' ')}</Badge>}
             </div>
-            <div className="text-sm font-medium text-slate-600 lg:text-right">{task.due_date ?? 'No due date'}</div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-600"><Avatar name={task.assignee?.name ?? 'Unassigned'} size="sm" /> <span className="truncate">{task.assignee?.name ?? 'Unassigned'}</span></div>
+            <div className="lg:text-right"><DueDate date={task.due_date} status={task.status} /></div>
         </Link>
     );
 }
@@ -92,7 +93,7 @@ export default function Index({ tasks, filters, statuses, priorities, projects }
                 ) : (
                     ['Overdue', 'Today', 'Upcoming', 'No due date'].map((group) => (
                         <section key={group} className="space-y-3">
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 px-1">
                                 <h3 className="text-sm font-bold uppercase tracking-[0.16em] text-slate-400">{group}</h3>
                                 <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-bold text-slate-600">{grouped[group]?.length ?? 0}</span>
                             </div>

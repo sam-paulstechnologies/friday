@@ -1,4 +1,4 @@
-import { Badge, EmptyState, Toolbar, inputClass, primaryButton, secondaryButton, statusTone, visibilityTone } from '@/Components/Ui';
+import { Avatar, Badge, DueDate, EmptyState, ProgressBar, Toolbar, inputClass, primaryButton, secondaryButton, statusTone, visibilityTone } from '@/Components/Ui';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, router } from '@inertiajs/react';
 import { useEffect, useState } from 'react';
@@ -22,7 +22,7 @@ export default function Index({ projects, filters, statuses, visibilities }) {
             <Head title="Projects" />
 
             <div className="space-y-5">
-                <div className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/70 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-col gap-4 overflow-hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/70 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                         <h2 className="text-xl font-bold tracking-tight text-slate-950">Project directory</h2>
                         <p className="mt-1 text-sm text-slate-500">Open a project, jump to its board, or inspect the timeline.</p>
@@ -50,12 +50,16 @@ export default function Index({ projects, filters, statuses, visibilities }) {
                     </div>
                 ) : (
                     <div className="grid gap-4 xl:grid-cols-2">
-                        {projects.map((project) => (
-                            <article key={project.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/70 transition hover:-translate-y-0.5 hover:shadow-md">
+                        {projects.map((project) => {
+                            const totalTasks = Number(project.open_tasks_count ?? 0) + Number(project.completed_tasks_count ?? 0);
+                            const progress = totalTasks > 0 ? Math.round((Number(project.completed_tasks_count ?? 0) / totalTasks) * 100) : 0;
+
+                            return (
+                            <article key={project.id} className="group rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/70 transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md hover:shadow-slate-200/80">
                                 <div className="flex items-start justify-between gap-4">
                                     <div className="min-w-0">
                                         <div className="flex items-center gap-3">
-                                            <span className="h-4 w-4 rounded-full" style={{ backgroundColor: project.color ?? '#2563eb' }} />
+                                            <span className="h-4 w-4 rounded-full ring-4 ring-slate-100" style={{ backgroundColor: project.color ?? '#2563eb' }} />
                                             <Link href={route('projects.show', project.id)} className="truncate text-lg font-bold text-slate-950 hover:text-slate-700">{project.name}</Link>
                                         </div>
                                         <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-500">{project.description || project.workspace?.name}</p>
@@ -63,22 +67,33 @@ export default function Index({ projects, filters, statuses, visibilities }) {
                                     <Badge tone={statusTone[project.status]}>{statusLabels[project.status]}</Badge>
                                 </div>
 
+                                <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Progress</div>
+                                            <div className="mt-1 text-sm font-semibold text-slate-800">{project.completed_tasks_count ?? 0} of {totalTasks} tasks complete</div>
+                                        </div>
+                                        <span className="text-sm font-bold text-slate-950">{progress}%</span>
+                                    </div>
+                                    <ProgressBar value={progress} className="mt-3" />
+                                </div>
+
                                 <div className="mt-5 grid gap-3 sm:grid-cols-4">
-                                    <div>
+                                    <div className="min-w-0">
                                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Visibility</div>
                                         <div className="mt-1"><Badge tone={visibilityTone[project.visibility]}>{visibilityLabels[project.visibility]}</Badge></div>
                                     </div>
-                                    <div>
+                                    <div className="min-w-0">
                                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Owner</div>
-                                        <div className="mt-1 truncate text-sm font-semibold text-slate-700">{project.owner?.name ?? 'Unassigned'}</div>
+                                        <div className="mt-1 flex items-center gap-2 truncate text-sm font-semibold text-slate-700"><Avatar name={project.owner?.name ?? 'Unassigned'} size="sm" /> {project.owner?.name ?? 'Unassigned'}</div>
                                     </div>
-                                    <div>
+                                    <div className="min-w-0">
                                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Team</div>
                                         <div className="mt-1 truncate text-sm font-semibold text-slate-700">{project.team?.name ?? 'No team'}</div>
                                     </div>
-                                    <div>
+                                    <div className="min-w-0">
                                         <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Due</div>
-                                        <div className="mt-1 text-sm font-semibold text-slate-700">{project.due_date ?? 'No due date'}</div>
+                                        <div className="mt-1"><DueDate date={project.due_date} status={project.status} /></div>
                                     </div>
                                 </div>
 
@@ -90,13 +105,13 @@ export default function Index({ projects, filters, statuses, visibilities }) {
                                     </Badge>
                                 </div>
 
-                                <div className="mt-5 flex flex-wrap gap-2">
+                                <div className="mt-5 flex flex-wrap gap-2 opacity-100 transition group-hover:opacity-100">
                                     <Link href={route('projects.show', project.id)} className={secondaryButton}>Open</Link>
                                     <Link href={route('projects.board', project.id)} className={secondaryButton}>Board</Link>
                                     <Link href={route('projects.timeline', project.id)} className={secondaryButton}>Timeline</Link>
                                 </div>
                             </article>
-                        ))}
+                        )})}
                     </div>
                 )}
             </div>

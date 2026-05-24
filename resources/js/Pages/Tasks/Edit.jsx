@@ -7,7 +7,7 @@ export default function Edit({ task, workspaces, projects, users, statuses, prio
         <AuthenticatedLayout title="Edit Task" subtitle={task.title}>
             <Head title={`Edit ${task.title}`} />
 
-            <div className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/70 sm:p-6">
                 <TaskForm
                     task={task}
                     workspaces={workspaces}

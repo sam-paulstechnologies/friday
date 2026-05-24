@@ -2,6 +2,7 @@ import InputError from '@/Components/InputError';
 import InputLabel from '@/Components/InputLabel';
 import PrimaryButton from '@/Components/PrimaryButton';
 import TextInput from '@/Components/TextInput';
+import { inputClass, secondaryButton } from '@/Components/Ui';
 import { Link, useForm } from '@inertiajs/react';
 
 const statusLabels = {
@@ -90,7 +91,7 @@ export default function ProjectForm({
                                 team_id: '',
                             });
                         }}
-                        className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                        className={`${inputClass} mt-1 block w-full`}
                     >
                         {workspaces.map((workspace) => (
                             <option key={workspace.id} value={workspace.id}>
@@ -109,7 +110,7 @@ export default function ProjectForm({
                     value={data.description}
                     onChange={(event) => setData('description', event.target.value)}
                     rows="4"
-                    className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                    className={`${inputClass} mt-1 block w-full`}
                 />
                 <InputError message={errors.description} className="mt-2" />
             </div>
@@ -121,7 +122,7 @@ export default function ProjectForm({
                         id="area_id"
                         value={data.area_id}
                         onChange={(event) => setData({ ...data, area_id: event.target.value, portfolio_id: '' })}
-                        className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                        className={`${inputClass} mt-1 block w-full`}
                     >
                         <option value="">No area</option>
                         {areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
@@ -135,7 +136,7 @@ export default function ProjectForm({
                         id="portfolio_id"
                         value={data.portfolio_id}
                         onChange={(event) => setData('portfolio_id', event.target.value)}
-                        className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                        className={`${inputClass} mt-1 block w-full`}
                     >
                         <option value="">No portfolio</option>
                         {areaPortfolios.map((portfolio) => <option key={portfolio.id} value={portfolio.id}>{portfolio.name}</option>)}
@@ -149,7 +150,7 @@ export default function ProjectForm({
                         id="team_id"
                         value={data.team_id}
                         onChange={(event) => setData('team_id', event.target.value)}
-                        className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                        className={`${inputClass} mt-1 block w-full`}
                     >
                         <option value="">No team</option>
                         {workspaceTeams.map((team) => (
@@ -167,7 +168,7 @@ export default function ProjectForm({
                         id="status"
                         value={data.status}
                         onChange={(event) => setData('status', event.target.value)}
-                        className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                        className={`${inputClass} mt-1 block w-full`}
                     >
                         {statuses.map((status) => (
                             <option key={status} value={status}>
@@ -184,7 +185,7 @@ export default function ProjectForm({
                         id="visibility"
                         value={data.visibility}
                         onChange={(event) => setData('visibility', event.target.value)}
-                        className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                        className={`${inputClass} mt-1 block w-full`}
                     >
                         {visibilities.map((visibility) => (
                             <option key={visibility} value={visibility}>
@@ -215,7 +216,7 @@ export default function ProjectForm({
                         id="health"
                         value={data.health}
                         onChange={(event) => setData('health', event.target.value)}
-                        className="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-slate-500 focus:ring-slate-500"
+                        className={`${inputClass} mt-1 block w-full`}
                     >
                         {healthOptions.map((health) => <option key={health} value={health}>{health.replace('_', ' ')}</option>)}
                     </select>
@@ -262,7 +263,7 @@ export default function ProjectForm({
             <div className="flex items-center justify-end gap-3 border-t border-slate-200 pt-5">
                 <Link
                     href={route('projects.index')}
-                    className="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+                    className={secondaryButton}
                 >
                     Cancel
                 </Link>
