@@ -50,7 +50,11 @@ export default function Index({ filters, options, summary, portfolioMetrics, pro
                             <h2 className="text-xl font-bold tracking-tight text-slate-950">Miriam metrics cockpit</h2>
                             <p className="mt-1 text-sm text-slate-500">Live counts from current tasks, projects, portfolios, and areas.</p>
                         </div>
-                        <Link href={route('dashboard')} className={secondaryButton}>Back to Dashboard</Link>
+                        <div className="flex flex-wrap gap-2">
+                            <Link href={route('goals.index')} className={secondaryButton}>Goals</Link>
+                            <Link href={route('portfolios.index')} className={secondaryButton}>Portfolios</Link>
+                            <Link href={route('dashboard')} className={secondaryButton}>Back to Dashboard</Link>
+                        </div>
                     </div>
                 </div>
 

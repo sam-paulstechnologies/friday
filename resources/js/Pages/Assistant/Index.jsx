@@ -1,4 +1,4 @@
-import { Badge, EmptyState, PageSection, primaryButton, secondaryButton } from '@/Components/Ui';
+import { Badge, EmptyState, PageSection, inputClass, primaryButton, secondaryButton } from '@/Components/Ui';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head } from '@inertiajs/react';
 import { useState } from 'react';
@@ -53,9 +53,9 @@ export default function Index({ assistant }) {
                                 AI Assistant is disabled. Enable it with safe local/mock configuration when ready.
                             </div>
                         )}
-                        <div className="min-h-80 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div className="min-h-80 space-y-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
                             {items.length === 0 ? <EmptyState title="Ask Miriam anything work-related" /> : items.map((item, index) => (
-                                <div key={index} className={`rounded-lg px-3 py-2 text-sm leading-6 ${item.role === 'user' ? 'ml-10 bg-rose-50 text-slate-950' : 'mr-10 bg-white text-slate-700'}`}>
+                                <div key={index} className={`rounded-lg px-3 py-2 text-sm leading-6 shadow-sm ${item.role === 'user' ? 'ml-10 bg-rose-50 text-slate-950 ring-1 ring-rose-100' : 'mr-10 bg-white text-slate-700 ring-1 ring-slate-200'}`}>
                                     <div className="whitespace-pre-wrap">{item.content}</div>
                                 </div>
                             ))}
@@ -71,7 +71,7 @@ export default function Index({ assistant }) {
                             </div>
                         )}
                         <form onSubmit={(event) => { event.preventDefault(); ask(); }} className="flex gap-2">
-                            <input value={message} onChange={(event) => setMessage(event.target.value)} className="min-w-0 flex-1 rounded-md border-slate-300 text-sm" placeholder="Ask Miriam..." />
+                            <input value={message} onChange={(event) => setMessage(event.target.value)} className={`${inputClass} min-w-0 flex-1`} placeholder="Ask Miriam..." />
                             <button type="submit" disabled={loading} className={primaryButton}>Send</button>
                         </form>
                     </div>

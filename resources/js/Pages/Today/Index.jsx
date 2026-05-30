@@ -174,10 +174,17 @@ export default function Index({ groups, focus, summary, dailyReview, reading }) 
 
             <div className="space-y-6">
                 <Panel className="overflow-hidden">
-                    <div className="p-6 sm:p-8">
-                        <Badge tone="bg-emerald-50 text-emerald-700 ring-emerald-100">Daily Execution</Badge>
-                        <h2 className="mt-4 text-3xl font-bold tracking-tight text-slate-950">My Day</h2>
-                        <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">{dailyReview.morning}</p>
+                    <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-center">
+                        <div>
+                            <Badge tone="bg-emerald-50 text-emerald-700 ring-emerald-100">Daily Execution</Badge>
+                            <h2 className="mt-4 text-3xl font-bold tracking-tight text-slate-950">My Day</h2>
+                            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">{dailyReview.morning}</p>
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Active today</div>
+                            <div className="mt-1 text-3xl font-bold text-slate-950">{activeToday.length}</div>
+                            <div className="mt-2 text-xs leading-5 text-slate-500">Missed and overdue work stays visible until you move it or complete it.</div>
+                        </div>
                     </div>
                 </Panel>
 
@@ -200,9 +207,6 @@ export default function Index({ groups, focus, summary, dailyReview, reading }) 
                 <TaskSection title="Active Today" tasks={activeToday} description={`${activeToday.length} task(s), ordered with missed and overdue work first`} />
                 <ReadingPanel reading={reading} />
                 <TaskSection title={titles.completed_today} tasks={groups.completed_today} completed description={`${groups.completed_today.length} completed today`} />
-                <TaskSection title={titles.due_today} tasks={groups.due_today} />
-                <TaskSection title={titles.scheduled_today} tasks={groups.scheduled_today} />
-                <TaskSection title={titles.overdue} tasks={groups.overdue} />
                 <TaskSection title={titles.upcoming} tasks={groups.upcoming} />
                 <TaskSection title={titles.no_due_date} tasks={groups.no_due_date} />
                 <TaskSection title="Blocked / Waiting" tasks={blockedWaiting} />

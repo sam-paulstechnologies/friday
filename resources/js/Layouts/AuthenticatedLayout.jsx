@@ -3,47 +3,42 @@ import AssistantPanel from '@/Components/AssistantPanel';
 import Dropdown from '@/Components/Dropdown';
 import { Link, router, usePage } from '@inertiajs/react';
 import { useEffect, useState } from 'react';
-import { primaryButton, secondaryButton } from '@/Components/Ui';
+import { primaryButton } from '@/Components/Ui';
 
 const groups = [
     {
-        label: 'Primary',
+        label: 'Work',
         items: [
-            { name: 'Home', href: route('dashboard'), activeRoutes: ['dashboard'], icon: 'home' },
+            { name: 'Dashboard', href: route('dashboard'), activeRoutes: ['dashboard'], icon: 'home' },
+            { name: 'My Day', href: route('today.index'), activeRoutes: ['today.*'], icon: 'target' },
             { name: 'Inbox', href: route('notifications.index'), activeRoutes: ['notifications.*'], icon: 'inbox' },
-            { name: 'My Tasks', href: route('tasks.index'), activeRoutes: ['tasks.*'], icon: 'check' },
+            { name: 'Tasks', href: route('tasks.index'), activeRoutes: ['tasks.*', 'task-review.*', 'prioritization-review.*'], icon: 'check' },
             { name: 'Projects', href: route('projects.index'), activeRoutes: ['projects.*'], icon: 'folder' },
-            { name: 'Portfolios', href: route('portfolios.index'), activeRoutes: ['portfolios.*', 'areas.*'], icon: 'briefcase' },
             { name: 'Planner', href: route('planner.index'), activeRoutes: ['planner.*', 'calendar.*', 'workload.*'], icon: 'calendar' },
-            { name: 'Reports', href: route('reports.index'), activeRoutes: ['reports.*'], icon: 'chart' },
+            { name: 'Reports', href: route('reports.index'), activeRoutes: ['reports.*', 'goals.*', 'portfolios.*', 'areas.*'], icon: 'chart' },
+            { name: 'Assistant', href: route('assistant.index'), activeRoutes: ['assistant.*'], icon: 'spark' },
         ],
     },
     {
-        label: 'Planning / Review',
+        label: 'More',
         items: [
-            { name: 'My Day', href: route('today.index'), activeRoutes: ['today.*'], icon: 'target' },
             { name: 'Task Review', href: route('task-review.index'), activeRoutes: ['task-review.*'], icon: 'list' },
             { name: 'Prioritization', href: route('prioritization-review.index'), activeRoutes: ['prioritization-review.*'], icon: 'sort' },
             { name: 'Waiting For', href: route('waiting.index'), activeRoutes: ['waiting.*'], icon: 'clock' },
             { name: 'Decisions', href: route('decisions.index'), activeRoutes: ['decisions.*'], icon: 'diamond' },
             { name: 'Risks', href: route('risks.index'), activeRoutes: ['risks.*'], icon: 'alert' },
             { name: 'Approvals', href: route('approvals.index'), activeRoutes: ['approvals.*'], icon: 'thumb' },
-        ],
-    },
-    {
-        label: 'Personal Foundation',
-        items: [
             { name: 'Spiritual', href: route('spiritual.index'), activeRoutes: ['spiritual.*'], icon: 'spark' },
             { name: 'Notes', href: route('notes.index'), activeRoutes: ['notes.*'], icon: 'note' },
         ],
     },
     {
-        label: 'Admin / Settings',
+        label: 'Settings',
         items: [
-            { name: 'Workspace Settings', href: route('settings.workspace.edit'), activeRoutes: ['settings.workspace.*'], icon: 'people' },
+            { name: 'Workspace', href: route('settings.workspace.edit'), activeRoutes: ['settings.workspace.*'], icon: 'people' },
             { name: 'Automations', href: route('settings.automations.index'), activeRoutes: ['settings.automations.*'], icon: 'spark' },
             { name: 'Integrations', href: route('settings.integrations.index'), activeRoutes: ['settings.integrations.*'], icon: 'calendar' },
-            { name: 'AI Brain Settings', href: route('settings.ai.edit'), activeRoutes: ['settings.ai.*'], icon: 'settings' },
+            { name: 'AI Brain', href: route('settings.ai.edit'), activeRoutes: ['settings.ai.*'], icon: 'settings' },
             { name: 'Custom Fields', href: route('admin.custom-fields.index'), activeRoutes: ['admin.custom-fields.*'], icon: 'sliders' },
             { name: 'Templates', href: route('templates.index'), activeRoutes: ['templates.*'], icon: 'layers' },
         ],
@@ -90,9 +85,9 @@ function SidebarLink({ item, active, onClick }) {
         <Link
             href={item.href}
             onClick={onClick}
-            className={`flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm font-medium transition ${
+            className={`flex items-center gap-2 rounded-md px-2.5 py-2 text-sm font-medium transition ${
                 active
-                    ? 'bg-rose-50 text-rose-700'
+                    ? 'bg-rose-50 text-rose-700 shadow-sm ring-1 ring-rose-100'
                     : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'
             }`}
         >
@@ -107,7 +102,8 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
     const user = page.props.auth.user;
     const unreadCount = page.props.notifications?.unread_count ?? 0;
     const [sidebarOpen, setSidebarOpen] = useState(false);
-    const [shortcutOpen, setShortcutOpen] = useState(true);
+    const [shortcutOpen, setShortcutOpen] = useState(false);
+    const [moreOpen, setMoreOpen] = useState(false);
     const [search, setSearch] = useState('');
 
     const isActive = (patterns = []) => patterns.some((pattern) => route().current(pattern));
@@ -122,10 +118,10 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
     useEffect(() => setSidebarOpen(false), [page.url]);
 
     return (
-        <div className="min-h-screen bg-slate-50 text-slate-950">
+        <div className="min-h-screen bg-[#f7f8fa] text-slate-950">
             {sidebarOpen && <button type="button" aria-label="Close navigation" className="fixed inset-0 z-30 bg-slate-950/30 lg:hidden" onClick={() => setSidebarOpen(false)} />}
 
-            <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[86vw] flex-col border-r border-slate-200 bg-white transition-transform duration-200 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+            <aside className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[86vw] flex-col border-r border-slate-200 bg-white/95 shadow-sm backdrop-blur transition-transform duration-200 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
                 <div className="border-b border-slate-200 px-3 py-3">
                     <div className="flex items-center gap-2">
                         <ApplicationLogo />
@@ -134,24 +130,38 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
                             <div className="truncate text-xs text-slate-500">Friday workspace</div>
                         </div>
                     </div>
-                    <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div className="mt-3 rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2">
                         <div className="text-xs font-semibold text-slate-500">Workspace</div>
                         <div className="mt-0.5 truncate text-sm font-semibold text-slate-900">Miriam Workspace</div>
                     </div>
                 </div>
 
                 <nav className="premium-scrollbar flex-1 overflow-y-auto px-3 py-3">
-                    {groups.map((group) => (
-                        <div key={group.label} className="mb-4">
-                            <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{group.label}</div>
-                            <div className="space-y-0.5">
-                                {group.items.map((item) => <SidebarLink key={item.name} item={item} active={isActive(item.activeRoutes)} onClick={() => setSidebarOpen(false)} />)}
+                    {groups.map((group) => {
+                        const collapsible = group.label === 'More';
+                        const open = !collapsible || moreOpen || group.items.some((item) => isActive(item.activeRoutes));
+
+                        return (
+                            <div key={group.label} className="mb-5">
+                                {collapsible ? (
+                                    <button type="button" onClick={() => setMoreOpen(!moreOpen)} className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400 hover:bg-slate-50 hover:text-slate-600">
+                                        More
+                                        <span>{open ? '-' : '+'}</span>
+                                    </button>
+                                ) : (
+                                    <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{group.label}</div>
+                                )}
+                                {open && (
+                                    <div className="space-y-0.5">
+                                        {group.items.map((item) => <SidebarLink key={item.name} item={item} active={isActive(item.activeRoutes)} onClick={() => setSidebarOpen(false)} />)}
+                                    </div>
+                                )}
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
 
                     <div className="mb-4">
-                        <button type="button" onClick={() => setShortcutOpen(!shortcutOpen)} className="flex w-full items-center justify-between px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                        <button type="button" onClick={() => setShortcutOpen(!shortcutOpen)} className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400 hover:bg-slate-50 hover:text-slate-600">
                             Workstreams
                             <span>{shortcutOpen ? '-' : '+'}</span>
                         </button>
@@ -170,13 +180,13 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
             </aside>
 
             <div className="lg:pl-72">
-                <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950 text-white">
+                <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 text-slate-950 backdrop-blur">
                     <div className="flex h-14 items-center gap-3 px-3 sm:px-4">
-                        <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-300 hover:bg-slate-800 hover:text-white lg:hidden" onClick={() => setSidebarOpen(true)}>
+                        <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-950 lg:hidden" onClick={() => setSidebarOpen(true)}>
                             <span className="sr-only">Open navigation</span>
                             <span className="h-4 w-5 border-y-2 border-current" />
                         </button>
-                        <Link href={route('dashboard')} className="hidden text-sm font-semibold text-white sm:block">Miriam / Friday</Link>
+                        <Link href={route('dashboard')} className="hidden text-sm font-semibold text-slate-950 sm:block">Miriam</Link>
 
                         <form onSubmit={submitSearch} className="min-w-0 flex-1">
                             <input
@@ -184,21 +194,21 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
                                 value={search}
                                 onChange={(event) => setSearch(event.target.value)}
                                 placeholder="Search tasks"
-                                className="h-9 w-full max-w-2xl rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-white placeholder:text-slate-400 focus:border-slate-500 focus:ring-slate-500"
+                                className="h-9 w-full max-w-2xl rounded-md border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:ring-amber-500/30"
                             />
                         </form>
 
                         {actions}
                         <Link href={route('tasks.create')} className={`${primaryButton} hidden sm:inline-flex`}>+ Create</Link>
-                        <Link href={route('notifications.index')} className="relative inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-300 hover:bg-slate-800 hover:text-white">
+                        <Link href={route('notifications.index')} className="relative inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-950">
                             <span className="h-4 w-4 rounded-sm border border-current" />
                             {unreadCount > 0 && <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-rose-500 px-1 text-center text-[10px] font-bold text-white">{unreadCount}</span>}
                         </Link>
 
                         <Dropdown>
                             <Dropdown.Trigger>
-                                <button type="button" className="flex h-8 items-center gap-2 rounded-md px-1.5 text-sm font-semibold text-slate-200 hover:bg-slate-800 hover:text-white">
-                                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-700 text-xs font-bold text-white">{user.name.charAt(0).toUpperCase()}</span>
+                                <button type="button" className="flex h-8 items-center gap-2 rounded-md px-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-950">
+                                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">{user.name.charAt(0).toUpperCase()}</span>
                                     <span className="hidden max-w-28 truncate md:block">{user.name}</span>
                                 </button>
                             </Dropdown.Trigger>
@@ -210,7 +220,7 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
                     </div>
                 </header>
 
-                <main className="px-4 py-5 sm:px-6 lg:px-8">
+                <main className="mx-auto max-w-[1480px] px-4 py-5 sm:px-6 lg:px-8">
                     <div className="mb-5">
                         <h1 className="text-2xl font-semibold tracking-tight text-slate-950">{title}</h1>
                         {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}

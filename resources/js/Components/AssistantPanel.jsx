@@ -1,4 +1,4 @@
-import { primaryButton, secondaryButton } from '@/Components/Ui';
+import { inputClass, primaryButton, secondaryButton } from '@/Components/Ui';
 import { Link } from '@inertiajs/react';
 import { useState } from 'react';
 
@@ -65,7 +65,7 @@ export default function AssistantPanel() {
             <button
                 type="button"
                 onClick={() => setOpen(true)}
-                className="fixed bottom-5 right-5 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full bg-slate-950 text-sm font-bold text-white shadow-lg ring-1 ring-slate-800 hover:bg-slate-800"
+                className="fixed bottom-5 right-5 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full bg-slate-950 text-sm font-bold text-white shadow-lg shadow-slate-900/20 ring-1 ring-slate-800 transition hover:-translate-y-0.5 hover:bg-slate-800"
                 aria-label="Open Miriam Assistant"
                 title="Miriam Assistant"
             >
@@ -75,8 +75,8 @@ export default function AssistantPanel() {
             {open && (
                 <div className="fixed inset-0 z-50">
                     <button type="button" aria-label="Close assistant" onClick={() => setOpen(false)} className="absolute inset-0 bg-slate-950/25" />
-                    <aside className="absolute bottom-0 right-0 top-0 flex w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-xl">
-                        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                    <aside className="absolute bottom-0 right-0 top-0 flex w-full max-w-lg flex-col border-l border-slate-200 bg-white shadow-xl">
+                        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/70 px-4 py-3">
                             <div>
                                 <div className="text-sm font-semibold text-slate-950">Miriam Assistant</div>
                                 <div className="text-xs text-slate-500">Workspace-aware, action-safe</div>
@@ -86,7 +86,7 @@ export default function AssistantPanel() {
 
                         <div className="premium-scrollbar flex-1 space-y-3 overflow-y-auto p-4">
                             {messages.map((item, index) => (
-                                <div key={index} className={`rounded-lg px-3 py-2 text-sm leading-6 ${item.role === 'user' ? 'ml-8 bg-rose-50 text-slate-950' : 'mr-8 bg-slate-100 text-slate-700'}`}>
+                                <div key={index} className={`rounded-lg px-3 py-2 text-sm leading-6 shadow-sm ${item.role === 'user' ? 'ml-8 bg-rose-50 text-slate-950 ring-1 ring-rose-100' : 'mr-8 bg-slate-50 text-slate-700 ring-1 ring-slate-200'}`}>
                                     <div className="whitespace-pre-wrap">{item.content}</div>
                                     {item.url && <Link href={item.url} className="mt-2 inline-block font-semibold text-rose-600">Open task</Link>}
                                 </div>
@@ -103,7 +103,7 @@ export default function AssistantPanel() {
                             )}
                         </div>
 
-                        <form onSubmit={send} className="border-t border-slate-200 p-3">
+                        <form onSubmit={send} className="border-t border-slate-200 bg-white p-3">
                             {voiceNotice && <div className="mb-2 text-xs font-medium text-slate-500">{voiceNotice}</div>}
                             <div className="flex gap-2">
                                 <button type="button" onClick={startVoice} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50" aria-label="Voice dictation" title="Voice dictation">
@@ -113,7 +113,7 @@ export default function AssistantPanel() {
                                     value={message}
                                     onChange={(event) => setMessage(event.target.value)}
                                     placeholder="Ask Miriam..."
-                                    className="min-w-0 flex-1 rounded-md border-slate-300 text-sm focus:border-amber-500 focus:ring-amber-500/30"
+                                    className={`${inputClass} min-w-0 flex-1`}
                                 />
                                 <button type="submit" disabled={loading} className={primaryButton}>Send</button>
                             </div>

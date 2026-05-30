@@ -1,4 +1,4 @@
-import { Badge, DueDate, EmptyState, FilterBar, PriorityDot, inputClass, primaryButton, priorityTone, statusTone } from '@/Components/Ui';
+import { Badge, DueDate, EmptyState, FilterBar, PriorityDot, inputClass, primaryButton, statusTone } from '@/Components/Ui';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, router } from '@inertiajs/react';
 import { useEffect, useState } from 'react';
@@ -25,7 +25,7 @@ export default function Index({ tasks, taskGroups = null, taskCounts = null, def
     const visibleTasks = groups[tab] ?? tasks;
 
     return (
-        <AuthenticatedLayout title="My Tasks" subtitle="A compact command list for assigned and reported work.">
+        <AuthenticatedLayout title="Tasks" subtitle="A compact command list for assigned and reported work.">
             <Head title="My Tasks" />
 
             <div className="space-y-4">

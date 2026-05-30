@@ -24,7 +24,7 @@ export const visibilityTone = {
 
 export function Badge({ children, tone = 'bg-slate-100 text-slate-700 ring-slate-200', className = '' }) {
     return (
-        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${tone} ${className}`}>
+        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${tone} ${className}`}>
             {children}
         </span>
     );
@@ -42,7 +42,7 @@ export function StatusPill({ status, labels = {}, className = '' }) {
 
 export function Panel({ children, className = '' }) {
     return (
-        <section className={`rounded-lg border border-slate-200 bg-white ${className}`}>
+        <section className={`rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/50 ${className}`}>
             {children}
         </section>
     );
@@ -65,7 +65,7 @@ export function PageSection({ title, description, action, children, className = 
 
 export function Toolbar({ children, className = '' }) {
     return (
-        <div className={`sticky top-14 z-10 rounded-lg border border-slate-200 bg-white p-3 ${className}`}>
+        <div className={`sticky top-14 z-10 rounded-lg border border-slate-200 bg-white/95 p-3 shadow-sm shadow-slate-200/50 backdrop-blur ${className}`}>
             {children}
         </div>
     );
@@ -74,7 +74,7 @@ export function Toolbar({ children, className = '' }) {
 export function EmptyState({ title, description, action }) {
     return (
         <div className="p-6 text-center sm:p-8">
-            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-rose-50 text-sm font-black text-rose-600 ring-1 ring-rose-100">
+            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-lg bg-slate-50 text-sm font-black text-slate-500 ring-1 ring-slate-200">
                 M
             </div>
             <div className="mt-3 text-sm font-semibold text-slate-900">{title}</div>
@@ -100,7 +100,7 @@ export function Avatar({ name = 'User', size = 'md' }) {
 
 export function MetadataItem({ label, value, children }) {
     return (
-        <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+        <div className="rounded-md border border-slate-200 bg-slate-50/80 p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
             <div className="mt-1 text-sm font-semibold text-slate-900">{children ?? value}</div>
         </div>
@@ -156,7 +156,7 @@ export function DotIcon({ className = '' }) {
 }
 
 export function AppCard({ children, className = '' }) {
-    return <section className={`rounded-lg border border-slate-200 bg-white ${className}`}>{children}</section>;
+    return <section className={`rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/50 ${className}`}>{children}</section>;
 }
 
 export function PageHeader({ title, subtitle, actions, meta, className = '' }) {
@@ -263,7 +263,7 @@ export function TaskRow({ task, href, statusLabels = {}, priorityLabels = {} }) 
 
 export function ProjectTile({ project, href, children }) {
     return (
-        <a href={href} className="block rounded-lg border border-slate-200 bg-white p-4 transition hover:border-slate-300 hover:shadow-sm">
+        <a href={href} className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/40 transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
             <div className="flex items-start gap-3">
                 <span className="mt-1 h-3 w-3 rounded-sm" style={{ backgroundColor: project.color ?? '#64748b' }} />
                 <div className="min-w-0 flex-1">
@@ -278,7 +278,7 @@ export function ProjectTile({ project, href, children }) {
 
 export function PortfolioTile({ portfolio, href, children }) {
     return (
-        <a href={href} className="block rounded-lg border border-slate-200 bg-white p-4 transition hover:border-slate-300 hover:shadow-sm">
+        <a href={href} className="block rounded-lg border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/40 transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <div className="truncate font-semibold text-slate-950">{portfolio.name}</div>

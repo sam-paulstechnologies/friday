@@ -1,4 +1,4 @@
-import { AppCard, Avatar, Badge, DueDate, EmptyState, PageSection, PriorityDot, ProgressBar, primaryButton, secondaryButton, priorityTone, statusTone } from '@/Components/Ui';
+import { AppCard, Badge, DueDate, EmptyState, PageSection, PriorityDot, ProgressBar, primaryButton, secondaryButton, statusTone } from '@/Components/Ui';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head, Link, usePage } from '@inertiajs/react';
 import { useMemo, useState } from 'react';
@@ -42,17 +42,18 @@ export default function Dashboard({
     }), [dueToday, scheduledToday, weeklyFocus, overdue, completedTasks]);
 
     return (
-        <AuthenticatedLayout title="Home" subtitle="Daily operating view for Miriam / Friday.">
+        <AuthenticatedLayout title="Dashboard" subtitle="Your calm command view for focus, progress, and attention needed.">
             <Head title="Dashboard" />
 
             <div className="space-y-5">
-                <AppCard className="p-5">
+                <AppCard className="overflow-hidden">
+                    <div className="border-b border-slate-100 bg-white p-5">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                         <div>
-                            <div className="text-sm text-slate-500">{date}</div>
+                            <div className="text-sm font-medium text-slate-500">{date}</div>
                             <h2 className="mt-1 text-2xl font-semibold text-slate-950">{greeting()}, {user.name}</h2>
                             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-                                Focus on the highest leverage work first, then clear today’s commitments.
+                                Focus on the highest leverage work first, then clear today's commitments.
                             </p>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -60,8 +61,9 @@ export default function Dashboard({
                             <Link href={route('prioritization-review.index')} className={secondaryButton}>Review priorities</Link>
                         </div>
                     </div>
+                    </div>
 
-                    <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+                    <div className="grid gap-2 p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
                         {summaryCards.map(([key, label]) => (
                             <div key={key} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
                                 <div className="text-xs font-medium text-slate-500">{label}</div>
@@ -210,7 +212,7 @@ export default function Dashboard({
                     </PageSection>
                 </section>
 
-                <PageSection title="Area Health" description="Open tasks, overdue pressure, and active projects by Life OS area.">
+                <PageSection title="Area Health" description="Open tasks, overdue pressure, and active projects by area.">
                     <div className="overflow-x-auto">
                         <table className="min-w-full text-left text-sm">
                             <thead>
@@ -273,7 +275,7 @@ function SpiritualReadingWidget({ reading }) {
     return (
         <AppCard>
             <div className="border-b border-slate-200 px-4 py-3">
-                <h3 className="text-sm font-semibold text-slate-950">Today’s Bible Reading</h3>
+                <h3 className="text-sm font-semibold text-slate-950">Today's Bible Reading</h3>
                 <p className="text-xs text-slate-500">Personal Foundation</p>
             </div>
             <div className="space-y-3 p-4">
