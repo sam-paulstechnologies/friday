@@ -13,6 +13,7 @@ use App\Services\DailyReview\DailyBriefingImageService;
 use App\Services\DailyReview\DailyBriefingService;
 use App\Services\DailyReview\DailyReviewService;
 use App\Services\Slack\SlackCommandParser;
+use Database\Seeders\SpiritualBibleReadingPlanSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -43,6 +44,81 @@ class DailyExecutionTest extends TestCase
         $this->assertSame(1, $groups->get('overdue')->count());
         $this->assertSame(1, $groups->get('due_today')->count());
         $this->assertSame(1, $groups->get('upcoming')->count());
+    }
+
+    public function test_completed_tasks_are_separated_from_active_today_groups(): void
+    {
+        [$user, $workspace, $project] = $this->context();
+        $active = $this->task($user, $workspace, $project, ['title' => 'Active today', 'due_date' => now()]);
+        $completed = $this->task($user, $workspace, $project, [
+            'title' => 'Completed today',
+            'due_date' => now(),
+            'status' => 'completed',
+            'completed_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('today.index'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('groups.due_today.0.id', $active->id)
+                ->where('groups.completed_today.0.id', $completed->id)
+                ->where('summary.completed_today', 1)
+            );
+    }
+
+    public function test_my_day_shows_due_today_scheduled_today_overdue_and_missed_yesterday(): void
+    {
+        [$user, $workspace, $project] = $this->context();
+        $overdue = $this->task($user, $workspace, $project, ['title' => 'Older overdue', 'due_date' => now()->subDays(2)]);
+        $missed = $this->task($user, $workspace, $project, ['title' => 'Missed yesterday', 'due_date' => now()->subDay()]);
+        $due = $this->task($user, $workspace, $project, ['title' => 'Due today', 'due_date' => now()]);
+        $scheduled = $this->task($user, $workspace, $project, ['title' => 'Scheduled today', 'start_date' => now(), 'due_date' => now()->addDays(4)]);
+
+        $this->actingAs($user)
+            ->get(route('today.index'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('groups.overdue.0.id', $overdue->id)
+                ->where('groups.overdue.1.id', $missed->id)
+                ->where('groups.missed_yesterday.0.id', $missed->id)
+                ->where('groups.due_today.0.id', $due->id)
+                ->where('groups.scheduled_today.0.id', $scheduled->id)
+                ->where('groups.missed_yesterday.0.missed_yesterday', true)
+                ->where('summary.missed_yesterday', 1)
+            );
+    }
+
+    public function test_my_day_quick_actions_move_tasks_without_silent_changes(): void
+    {
+        [$user, $workspace, $project] = $this->context();
+        $task = $this->task($user, $workspace, $project, ['due_date' => now()->subDay()]);
+
+        $this->actingAs($user)->patch(route('today.tasks.today', $task))->assertRedirect();
+        $this->assertSame(now()->toDateString(), $task->refresh()->due_date->toDateString());
+
+        $this->actingAs($user)->patch(route('today.tasks.tomorrow', $task))->assertRedirect();
+        $this->assertSame(now()->addDay()->toDateString(), $task->refresh()->due_date->toDateString());
+
+        $this->actingAs($user)->patch(route('today.tasks.snooze', $task))->assertRedirect();
+        $this->assertSame(now()->addDays(3)->toDateString(), $task->refresh()->due_date->toDateString());
+    }
+
+    public function test_dashboard_exposes_todays_focus_reading_and_missed_warning(): void
+    {
+        [$user, $workspace, $project] = $this->context();
+        $this->seed(SpiritualBibleReadingPlanSeeder::class);
+        $focus = $this->task($user, $workspace, $project, ['title' => 'Urgent today', 'priority' => 'urgent', 'due_date' => now()]);
+        $this->task($user, $workspace, $project, ['title' => 'Missed yesterday', 'due_date' => now()->subDay()]);
+
+        $this->actingAs($user)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('focus.0.id', $focus->id)
+                ->where('summary.missed_yesterday', 1)
+                ->where('spiritualReading.today_label', 'Genesis 1-14')
+            );
     }
 
     public function test_same_user_date_and_type_reuses_existing_daily_review(): void
@@ -186,7 +262,23 @@ class DailyExecutionTest extends TestCase
 
         Http::assertSent(fn ($request) => str_contains($request->url(), 'files.completeUploadExternal')
             && str_contains((string) $request->body(), 'Friday Daily Briefing - '.now()->toDateString())
-            && str_contains((string) $request->body(), 'Open: 1 | Overdue: 0 | Due today: 1 | Due this week: 1'));
+            && str_contains((string) $request->body(), 'Open: 1 | Overdue: 0 | Due today: 1 | Due this week: 1')
+            && str_contains((string) $request->body(), 'Focus: Ship launch checklist')
+            && str_contains((string) $request->body(), 'Missed yesterday: 0'));
+    }
+
+    public function test_slack_text_payload_includes_today_focus_and_missed_yesterday(): void
+    {
+        [$user, $workspace, $project] = $this->context();
+        $this->task($user, $workspace, $project, ['title' => 'Urgent today', 'priority' => 'urgent', 'due_date' => now()]);
+        $this->task($user, $workspace, $project, ['title' => 'Missed yesterday', 'priority' => 'high', 'due_date' => now()->subDay()]);
+
+        $review = app(DailyReviewService::class)->createMorningReview($user, ['priority' => 'urgent-high']);
+        $briefing = app(DailyBriefingService::class)->build($review);
+        $message = app(DailyBriefingService::class)->textMessage($briefing);
+
+        $this->assertStringContainsString('Today focus: Missed yesterday | Urgent today', $message);
+        $this->assertStringContainsString('Missed yesterday: 1', $message);
     }
 
     public function test_daily_briefing_removes_duplicate_tasks_across_sections(): void

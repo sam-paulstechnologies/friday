@@ -57,8 +57,11 @@ class DashboardController extends Controller
             'date' => now()->format('l, F j, Y'),
             'summary' => [
                 'overdue' => $groups->get('overdue')->count(),
+                'missed_yesterday' => $groups->get('missed_yesterday')->count(),
                 'due_today' => $groups->get('due_today')->count(),
+                'scheduled_today' => $groups->get('scheduled_today')->count(),
                 'upcoming' => $groups->get('upcoming')->count(),
+                'completed_today' => $groups->get('completed_today')->count(),
                 'waiting_for' => WaitingItem::where('user_id', $user->id)->where('status', 'open')->count() + $commandTasks->get('waiting_for', collect())->count(),
                 'blockers' => Blocker::where('user_id', $user->id)->where('status', 'open')->count() + $commandTasks->get('blocker', collect())->count(),
                 'decisions' => Decision::where('user_id', $user->id)->where('status', 'pending')->count() + $commandTasks->get('decision', collect())->count(),
@@ -68,7 +71,10 @@ class DashboardController extends Controller
             'focus' => $focus->map(fn (Task $task) => $this->taskResource($task))->values(),
             'overdue' => $groups->get('overdue')->map(fn (Task $task) => $this->taskResource($task))->values(),
             'dueToday' => $groups->get('due_today')->map(fn (Task $task) => $this->taskResource($task))->values(),
+            'scheduledToday' => $groups->get('scheduled_today')->map(fn (Task $task) => $this->taskResource($task))->values(),
+            'missedYesterday' => $groups->get('missed_yesterday')->map(fn (Task $task) => $this->taskResource($task))->values(),
             'weeklyFocus' => $groups->get('upcoming')->map(fn (Task $task) => $this->taskResource($task))->values(),
+            'completedToday' => $groups->get('completed_today')->map(fn (Task $task) => $this->taskResource($task))->values(),
             'completedTasks' => $completedTasks->map(fn (Task $task) => $this->taskResource($task))->values(),
             'spiritualReading' => $spiritualReadingSummaryService->forUser($user),
             'commandCenter' => [

@@ -49,7 +49,9 @@ Route::post('/webhooks/slack/events', SlackWebhookController::class)->name('webh
 
 Route::middleware('auth')->group(function () {
     Route::get('/today', [TodayController::class, 'index'])->name('today.index');
+    Route::patch('/today/tasks/{task}/today', [TodayController::class, 'today'])->name('today.tasks.today');
     Route::patch('/today/tasks/{task}/tomorrow', [TodayController::class, 'tomorrow'])->name('today.tasks.tomorrow');
+    Route::patch('/today/tasks/{task}/snooze', [TodayController::class, 'snooze'])->name('today.tasks.snooze');
     Route::get('/areas', [AreaController::class, 'index'])->name('areas.index');
     Route::get('/areas/{area}', [AreaController::class, 'show'])->name('areas.show');
     Route::get('/portfolios', [PortfolioController::class, 'index'])->name('portfolios.index');

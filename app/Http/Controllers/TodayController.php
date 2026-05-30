@@ -4,13 +4,19 @@ namespace App\Http\Controllers;
 
 use App\Models\Task;
 use App\Services\DailyReview\DailyReviewService;
+use App\Services\Spiritual\SpiritualReadingSummaryService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class TodayController extends Controller
 {
-    public function index(Request $request, DailyReviewService $dailyReviewService): Response
+    public function index(
+        Request $request,
+        DailyReviewService $dailyReviewService,
+        SpiritualReadingSummaryService $spiritualReadingSummaryService
+    ): Response
     {
         $groups = $dailyReviewService->collectTodayTasks($request->user());
         $focus = $dailyReviewService->selectTopFocusItems($groups);
@@ -20,16 +26,24 @@ class TodayController extends Controller
             'focus' => $focus->map(fn (Task $task) => $this->taskResource($task))->values(),
             'summary' => [
                 'overdue' => $groups->get('overdue')->count(),
+                'missed_yesterday' => $groups->get('missed_yesterday')->count(),
                 'due_today' => $groups->get('due_today')->count(),
+                'scheduled_today' => $groups->get('scheduled_today')->count(),
                 'upcoming' => $groups->get('upcoming')->count(),
+                'completed_today' => $groups->get('completed_today')->count(),
                 'blocked_waiting' => $groups->get('blocked')->count() + $groups->get('waiting')->count(),
             ],
+            'dailyReview' => [
+                'morning' => 'Due today, scheduled today, overdue, and reading plan are ready for planning.',
+                'evening' => 'Completed today is separated; unfinished overdue and missed work can be moved forward manually.',
+            ],
+            'reading' => $spiritualReadingSummaryService->forUser($request->user()),
         ]);
     }
 
     public function tomorrow(Request $request, Task $task)
     {
-        abort_unless($task->assignee_id === $request->user()->id || $task->reporter_id === $request->user()->id, 403);
+        Gate::authorize('update', $task);
 
         $task->update(['due_date' => now()->addDay()->toDateString()]);
         $task->comments()->create([
@@ -40,6 +54,32 @@ class TodayController extends Controller
         return back()->with('success', 'Task moved to tomorrow.');
     }
 
+    public function today(Request $request, Task $task)
+    {
+        Gate::authorize('update', $task);
+
+        $task->update(['due_date' => now()->toDateString()]);
+        $task->comments()->create([
+            'user_id' => $request->user()->id,
+            'body' => 'Moved to today from My Day.',
+        ]);
+
+        return back()->with('success', 'Task moved to today.');
+    }
+
+    public function snooze(Request $request, Task $task)
+    {
+        Gate::authorize('update', $task);
+
+        $task->update(['due_date' => now()->addDays(3)->toDateString()]);
+        $task->comments()->create([
+            'user_id' => $request->user()->id,
+            'body' => 'Snoozed for 3 days from My Day.',
+        ]);
+
+        return back()->with('success', 'Task snoozed.');
+    }
+
     private function taskResource(Task $task): array
     {
         return [
@@ -48,6 +88,9 @@ class TodayController extends Controller
             'status' => $task->status,
             'priority' => $task->priority,
             'due_date' => $task->due_date?->toDateString(),
+            'start_date' => $task->start_date?->toDateString(),
+            'completed_at' => $task->completed_at?->toDateTimeString(),
+            'missed_yesterday' => $task->due_date?->toDateString() === now()->subDay()->toDateString(),
             'workspace' => $task->workspace ? [
                 'id' => $task->workspace->id,
                 'name' => $task->workspace->name,

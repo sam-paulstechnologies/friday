@@ -102,8 +102,12 @@ class ProjectController extends Controller
             'tasks' => fn ($query) => $query
                 ->with(['assignee:id,name', 'area:id,name', 'portfolio:id,name', 'labels:id,name,color'])
                 ->whereNull('parent_task_id')
+                ->orderByRaw("case when status = 'completed' then 1 when status = 'archived' then 2 else 0 end")
+                ->orderByRaw("case priority when 'urgent' then 1 when 'high' then 2 when 'medium' then 3 when 'low' then 4 else 5 end")
+                ->orderByRaw('due_date is null')
+                ->orderBy('due_date')
                 ->orderBy('position')
-                ->latest(),
+                ->orderByDesc('updated_at'),
         ]);
 
         $memberIds = $project->members->pluck('id')->push($project->owner_id)->filter()->unique();

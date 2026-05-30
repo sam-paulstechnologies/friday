@@ -21,7 +21,7 @@ const groups = [
     {
         label: 'Planning / Review',
         items: [
-            { name: 'Today', href: route('today.index'), activeRoutes: ['today.*'], icon: 'target' },
+            { name: 'My Day', href: route('today.index'), activeRoutes: ['today.*'], icon: 'target' },
             { name: 'Task Review', href: route('task-review.index'), activeRoutes: ['task-review.*'], icon: 'list' },
             { name: 'Prioritization', href: route('prioritization-review.index'), activeRoutes: ['prioritization-review.*'], icon: 'sort' },
             { name: 'Waiting For', href: route('waiting.index'), activeRoutes: ['waiting.*'], icon: 'clock' },

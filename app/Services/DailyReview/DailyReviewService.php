@@ -39,12 +39,30 @@ class DailyReviewService
 
         return collect([
             'overdue' => $tasks->filter(fn (Task $task) => $task->due_date && $task->due_date->toDateString() < $today && $task->status !== 'blocked' && $task->status !== 'waiting')->values(),
+            'missed_yesterday' => $tasks->filter(fn (Task $task) => $task->due_date?->toDateString() === now()->subDay()->toDateString() && $task->status !== 'blocked' && $task->status !== 'waiting')->values(),
             'due_today' => $tasks->filter(fn (Task $task) => $task->due_date?->toDateString() === $today && $task->status !== 'blocked' && $task->status !== 'waiting')->values(),
+            'scheduled_today' => $tasks->filter(fn (Task $task) => $task->start_date?->toDateString() === $today && $task->due_date?->toDateString() !== $today && $task->status !== 'blocked' && $task->status !== 'waiting')->values(),
             'upcoming' => $tasks->filter(fn (Task $task) => $task->due_date && $task->due_date->toDateString() > $today && $task->due_date->toDateString() <= $nextWeek && $task->status !== 'blocked' && $task->status !== 'waiting')->values(),
             'no_due_date' => $tasks->filter(fn (Task $task) => is_null($task->due_date) && ! in_array($task->status, ['blocked', 'waiting'], true))->values(),
             'blocked' => $tasks->filter(fn (Task $task) => $task->status === 'blocked')->values(),
             'waiting' => $tasks->filter(fn (Task $task) => $task->status === 'waiting')->values(),
+            'completed_today' => $this->completedToday($user),
         ]);
+    }
+
+    public function completedToday(User $user): Collection
+    {
+        return Task::query()
+            ->with(['workspace:id,name', 'project:id,name', 'area:id,name', 'portfolio:id,name'])
+            ->where(function ($query) use ($user): void {
+                $query->where('assignee_id', $user->id)
+                    ->orWhere('reporter_id', $user->id);
+            })
+            ->where('status', 'completed')
+            ->whereDate('completed_at', now()->toDateString())
+            ->orderByDesc('completed_at')
+            ->orderByDesc('updated_at')
+            ->get();
     }
 
     public function createMorningReview(User $user, array $options = []): DailyReview
@@ -118,6 +136,7 @@ class DailyReviewService
             ->merge($focus->map(fn (Task $task) => ['task' => $task, 'type' => 'focus']))
             ->merge($this->typedTasks($tasks, 'overdue'))
             ->merge($this->typedTasks($tasks, 'due_today'))
+            ->merge($this->typedTasks($tasks, 'scheduled_today'))
             ->merge($this->typedTasks($tasks, 'blocked'))
             ->merge($this->typedTasks($tasks, 'waiting'))
             ->merge($this->typedTasks($tasks, 'upcoming'))

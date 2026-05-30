@@ -15,6 +15,7 @@ class DailyBriefingService
         'focus' => 3,
         'overdue' => 5,
         'due_today' => 5,
+        'scheduled_today' => 5,
         'upcoming' => 5,
     ];
 
@@ -40,6 +41,8 @@ class DailyBriefingService
             'priority_label' => $priority === 'urgent-high' ? 'Showing urgent/high only' : 'Showing all priorities',
             'summary' => $summary,
             'summary_line' => "Open tasks: {$summary['open']} | Overdue: {$summary['overdue']} | Due today: {$summary['due_today']} | Due this week: {$summary['due_week']}",
+            'today_focus_line' => $this->todayFocusLine($review),
+            'missed_yesterday_count' => $this->missedYesterdayCount($review),
             'spiritual' => $this->spiritualReadingSummaryService->forUser($review->user, $review->review_date),
             'portfolio_summary' => $this->portfolioSummary($review, $priority),
             'sections' => $this->sections($review->items->sortBy('position')->values(), $limit),
@@ -52,6 +55,8 @@ class DailyBriefingService
 
         return "{$briefing['title']} - {$briefing['date']}\n"
             ."Open: {$summary['open']} | Overdue: {$summary['overdue']} | Due today: {$summary['due_today']} | Due this week: {$summary['due_week']}\n"
+            .'Focus: '.$briefing['today_focus_line']."\n"
+            .'Missed yesterday: '.$briefing['missed_yesterday_count']."\n"
             .'Spiritual: '.$briefing['spiritual']['today_label'].' | '.$briefing['spiritual']['status_label'];
     }
 
@@ -60,6 +65,8 @@ class DailyBriefingService
         $lines = [
             "{$briefing['title']} - {$briefing['date']}",
             $briefing['summary_line'],
+            'Today focus: '.$briefing['today_focus_line'],
+            'Missed yesterday: '.$briefing['missed_yesterday_count'],
             '',
             ...$this->spiritualReadingSummaryService->slackBlock($briefing['spiritual']),
             '',
@@ -163,6 +170,30 @@ class DailyBriefingService
         }
 
         return $rows;
+    }
+
+    private function todayFocusLine(DailyReview $review): string
+    {
+        $focus = $review->items
+            ->where('item_type', 'focus')
+            ->take(3)
+            ->pluck('snapshot_title')
+            ->filter()
+            ->values();
+
+        return $focus->isEmpty() ? 'No focus tasks selected' : $focus->implode(' | ');
+    }
+
+    private function missedYesterdayCount(DailyReview $review): int
+    {
+        return Task::query()
+            ->where(function (Builder $query) use ($review): void {
+                $query->where('assignee_id', $review->user_id)
+                    ->orWhere('reporter_id', $review->user_id);
+            })
+            ->whereNotIn('status', DailyReviewService::CLOSED_STATUSES)
+            ->whereDate('due_date', $review->review_date->copy()->subDay()->toDateString())
+            ->count();
     }
 
     private function taskTableRow(string $number, string $type, string $priority, string $due, string $portfolio, string $project, string $task): string

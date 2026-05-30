@@ -20,7 +20,10 @@ export default function Dashboard({
     focus,
     overdue,
     dueToday,
+    scheduledToday = [],
+    missedYesterday = [],
     weeklyFocus,
+    completedToday = [],
     completedTasks = [],
     spiritualReading,
     commandCenter,
@@ -30,10 +33,10 @@ export default function Dashboard({
     const user = usePage().props.auth.user;
     const [taskTab, setTaskTab] = useState('upcoming');
     const taskTabs = useMemo(() => ({
-        upcoming: [...dueToday, ...weeklyFocus].filter((task) => task.status !== 'completed').slice(0, 8),
+        upcoming: [...dueToday, ...scheduledToday, ...weeklyFocus].filter((task) => task.status !== 'completed').slice(0, 8),
         overdue: overdue.filter((task) => task.status !== 'completed').slice(0, 8),
         completed: completedTasks.filter((task) => task.status === 'completed').slice(0, 8),
-    }), [dueToday, weeklyFocus, overdue, completedTasks]);
+    }), [dueToday, scheduledToday, weeklyFocus, overdue, completedTasks]);
 
     return (
         <AuthenticatedLayout title="Home" subtitle="Daily operating view for Miriam / Friday.">
@@ -62,6 +65,44 @@ export default function Dashboard({
                                 <div className={`mt-1 text-xl font-semibold ${['overdue', 'blockers', 'risks'].includes(key) && Number(summary[key] ?? 0) > 0 ? 'text-rose-600' : 'text-slate-950'}`}>{summary[key] ?? 0}</div>
                             </div>
                         ))}
+                    </div>
+                </AppCard>
+
+                <AppCard>
+                    <div className="flex flex-col gap-4 border-b border-slate-200 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div>
+                            <h3 className="text-sm font-semibold text-slate-950">Today's Focus</h3>
+                            <p className="text-xs text-slate-500">Top 3 tasks, reading, and missed-work signal.</p>
+                        </div>
+                        <Link href={route('today.index')} className={secondaryButton}>Open My Day</Link>
+                    </div>
+                    <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+                        <div className="space-y-2">
+                            {focus.length === 0 ? (
+                                <EmptyState title="No focus tasks today" description="Due and high-priority work will appear here." />
+                            ) : focus.slice(0, 3).map((task) => <HomeTaskRow key={task.id} task={task} />)}
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            <div className="grid grid-cols-2 gap-2 text-sm">
+                                <div>
+                                    <div className="text-xs font-medium text-slate-500">Overdue</div>
+                                    <div className={`mt-1 text-xl font-semibold ${Number(summary.overdue ?? 0) > 0 ? 'text-rose-600' : 'text-slate-950'}`}>{summary.overdue ?? 0}</div>
+                                </div>
+                                <div>
+                                    <div className="text-xs font-medium text-slate-500">Done today</div>
+                                    <div className="mt-1 text-xl font-semibold text-emerald-600">{summary.completed_today ?? completedToday.length}</div>
+                                </div>
+                            </div>
+                            {spiritualReading?.has_plan && (
+                                <div className="mt-3 border-t border-slate-200 pt-3">
+                                    <div className="text-xs font-medium text-slate-500">Reading today</div>
+                                    <div className="mt-1 text-sm font-semibold text-slate-950">{spiritualReading.today_label}</div>
+                                </div>
+                            )}
+                            {Number(summary.missed_yesterday ?? missedYesterday.length) > 0 && (
+                                <p className="mt-3 rounded-md bg-amber-50 p-2 text-xs leading-5 text-amber-800">{summary.missed_yesterday ?? missedYesterday.length} item(s) missed yesterday. Review them in My Day.</p>
+                            )}
+                        </div>
                     </div>
                 </AppCard>
 
