@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Model;
 
@@ -48,6 +49,13 @@ class Task extends Model
         'admin',
     ];
 
+    public const RECURRENCE_TYPES = [
+        'none',
+        'daily',
+        'weekly',
+        'monthly',
+    ];
+
     protected $fillable = [
         'area_id',
         'portfolio_id',
@@ -67,6 +75,11 @@ class Task extends Model
         'reporter_id',
         'start_date',
         'due_date',
+        'recurrence_type',
+        'recurrence_interval',
+        'recurrence_ends_at',
+        'recurring_parent_id',
+        'last_generated_at',
         'completed_at',
         'position',
     ];
@@ -76,6 +89,8 @@ class Task extends Model
         return [
             'start_date' => 'date',
             'due_date' => 'date',
+            'recurrence_ends_at' => 'date',
+            'last_generated_at' => 'datetime',
             'completed_at' => 'datetime',
         ];
     }
@@ -105,9 +120,24 @@ class Task extends Model
         return $this->belongsTo(Task::class, 'parent_task_id');
     }
 
+    public function recurringParent(): BelongsTo
+    {
+        return $this->belongsTo(Task::class, 'recurring_parent_id');
+    }
+
     public function subtasks(): HasMany
     {
         return $this->hasMany(Task::class, 'parent_task_id');
+    }
+
+    public function generatedOccurrences(): HasMany
+    {
+        return $this->hasMany(Task::class, 'recurring_parent_id');
+    }
+
+    public function labels(): BelongsToMany
+    {
+        return $this->belongsToMany(Label::class)->withTimestamps();
     }
 
     public function comments(): HasMany

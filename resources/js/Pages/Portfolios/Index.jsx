@@ -1,6 +1,6 @@
-import { Badge, EmptyState, PageSection, ProgressBar } from '@/Components/Ui';
+import { EmptyState, PageSection, PortfolioTile, ProgressBar } from '@/Components/Ui';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, Link } from '@inertiajs/react';
+import { Head } from '@inertiajs/react';
 
 export default function Index({ areas }) {
     return (
@@ -22,34 +22,28 @@ export default function Index({ areas }) {
                                     const hasWork = totalProjects + openTasks + completedTasks > 0;
 
                                     return (
-                                    <Link key={portfolio.id} href={route('portfolios.show', portfolio.id)} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div>
-                                                <div className="font-bold text-slate-950">{portfolio.name}</div>
-                                                <p className="mt-2 text-sm leading-6 text-slate-500">{portfolio.description}</p>
-                                            </div>
-                                            <Badge>{portfolio.status}</Badge>
-                                        </div>
-                                        <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                                            <Metric label="Projects" value={totalProjects} />
-                                            <Metric label="Open tasks" value={openTasks} />
+                                    <PortfolioTile
+                                        key={portfolio.id}
+                                        portfolio={{ ...portfolio, area, projects_count: totalProjects, open_tasks_count: openTasks, overdue_tasks_count: overdueTasks, progress_percentage: progress }}
+                                        href={route('portfolios.show', portfolio.id)}
+                                    >
+                                        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                                             <Metric label="Completed" value={completedTasks} />
-                                            <Metric label="Overdue" value={overdueTasks} tone={overdueTasks > 0 ? 'text-rose-600' : 'text-slate-950'} />
-                                        </div>
-                                        {hasWork ? (
-                                            <div className="mt-4">
-                                                <div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-500">
-                                                    <span>Task progress</span>
-                                                    <span>{progress ?? 0}%</span>
+                                            {hasWork ? (
+                                                <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                                                    <div className="mb-1 flex items-center justify-between text-[11px] font-semibold uppercase text-slate-400">
+                                                        <span>Progress</span>
+                                                        <span>{progress ?? 0}%</span>
+                                                    </div>
+                                                    <ProgressBar value={progress ?? 0} />
                                                 </div>
-                                                <ProgressBar value={progress ?? 0} />
-                                            </div>
-                                        ) : (
-                                            <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-500">
-                                                No active work yet
-                                            </div>
-                                        )}
-                                    </Link>
+                                            ) : (
+                                                <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">
+                                                    No active work
+                                                </div>
+                                            )}
+                                        </div>
+                                    </PortfolioTile>
                                 )})}
                             </div>
                         )}
@@ -62,9 +56,9 @@ export default function Index({ areas }) {
 
 function Metric({ label, value, tone = 'text-slate-950' }) {
     return (
-        <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
-            <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
-            <div className={`mt-1 text-lg font-bold ${tone}`}>{value}</div>
+        <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase text-slate-400">{label}</div>
+            <div className={`mt-1 text-sm font-bold ${tone}`}>{value}</div>
         </div>
     );
 }

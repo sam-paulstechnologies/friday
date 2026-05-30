@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Notifications\DatabaseNotification;
+use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -33,7 +34,7 @@ class NotificationController extends Controller
 
     public function read(Request $request, DatabaseNotification $notification)
     {
-        abort_unless($notification->notifiable_id === $request->user()->id, 403);
+        Gate::authorize('update', $notification);
 
         $notification->markAsRead();
 

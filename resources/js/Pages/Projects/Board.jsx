@@ -24,7 +24,7 @@ function TaskCard({ task, onDragStart }) {
             href={route('tasks.show', task.id)}
             draggable
             onDragStart={(event) => onDragStart(event, task.id)}
-            className="block rounded-2xl border border-slate-200 bg-white p-3 shadow-sm shadow-slate-200/60 transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+            className="block rounded-md border border-slate-200 bg-white p-3 transition duration-150 hover:border-slate-300 hover:shadow-sm"
         >
             {task.section && (
                 <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -81,12 +81,12 @@ export default function Board({ project, columns, statuses }) {
         <AuthenticatedLayout title={`${project.name} Board`} subtitle={project.workspace?.name}>
             <Head title={`${project.name} Board`} />
 
-            <div className="space-y-5">
-                <Panel className="overflow-hidden">
-                    <div className="flex flex-col gap-3 bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.13),_transparent_30%),linear-gradient(135deg,_#ffffff,_#f8fafc_58%,_#ecfeff)] p-5 md:flex-row md:items-center md:justify-between">
+            <div className="space-y-4">
+                <Panel>
+                    <div className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
                         <div>
                             <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">Kanban board</p>
-                            <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-950">{project.name}</h2>
+                            <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-950">{project.name}</h2>
                             <p className="mt-1 text-sm text-slate-500">
                                 Drag cards between status columns to update task status.
                             </p>
@@ -101,7 +101,7 @@ export default function Board({ project, columns, statuses }) {
                 </Panel>
 
                 <section className="premium-scrollbar overflow-x-auto pb-2">
-                    <div className="grid min-w-[1100px] grid-cols-5 gap-4">
+                    <div className="grid min-w-[1100px] grid-cols-5 gap-3">
                         {statuses.map((status) => (
                             <div
                                 key={status}
@@ -111,13 +111,13 @@ export default function Board({ project, columns, statuses }) {
                                 }}
                                 onDragLeave={() => setActiveColumn(null)}
                                 onDrop={(event) => dropTask(event, status)}
-                                className={`min-h-[560px] rounded-3xl border p-3 transition duration-200 ${
+                                className={`min-h-[560px] rounded-lg border p-2 transition duration-200 ${
                                     activeColumn === status
                                         ? 'border-emerald-300 bg-emerald-50/50 ring-2 ring-emerald-100'
-                                        : 'border-slate-200 bg-white/70'
+                                        : 'border-slate-200 bg-slate-100'
                                 }`}
                             >
-                                <div className="mb-3 flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm shadow-slate-200/60">
+                                <div className="mb-2 flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2">
                                     <h3 className="text-sm font-bold text-slate-950">{statusLabels[status]}</h3>
                                     <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-slate-500 ring-1 ring-slate-200">
                                         {columnCounts[status]}
@@ -126,7 +126,7 @@ export default function Board({ project, columns, statuses }) {
 
                                 <div className="space-y-3">
                                     {(columns[status] ?? []).length === 0 ? (
-                                        <div className="rounded-2xl border border-dashed border-slate-300 bg-white/80 p-5 text-center text-sm text-slate-500">
+                                        <div className="rounded-md border border-dashed border-slate-300 bg-white/80 p-4 text-center text-sm text-slate-500">
                                             Drop tasks here to move them to {statusLabels[status]}.
                                         </div>
                                     ) : (

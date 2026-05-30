@@ -3,11 +3,14 @@
 namespace Tests\Feature;
 
 use App\Models\DailyReview;
+use App\Models\Portfolio;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\Team;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Services\DailyReview\DailyBriefingImageService;
+use App\Services\DailyReview\DailyBriefingService;
 use App\Services\DailyReview\DailyReviewService;
 use App\Services\Slack\SlackCommandParser;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -42,12 +45,35 @@ class DailyExecutionTest extends TestCase
         $this->assertSame(1, $groups->get('upcoming')->count());
     }
 
-    public function test_morning_command_creates_review(): void
+    public function test_same_user_date_and_type_reuses_existing_daily_review(): void
     {
-        Http::fake(['slack.com/*' => Http::response(['ok' => true, 'channel' => 'C123', 'ts' => '123.456'])]);
-        config(['services.slack.bot_token' => 'xoxb-test', 'services.slack.default_channel' => 'C123']);
         [$user, $workspace, $project] = $this->context();
         $this->task($user, $workspace, $project, ['title' => 'Today task', 'due_date' => now()]);
+        $service = app(DailyReviewService::class);
+
+        $first = $service->createMorningReview($user);
+        $second = $service->createMorningReview($user);
+
+        $this->assertSame($first->id, $second->id);
+        $this->assertSame(1, DailyReview::query()
+            ->where('user_id', $user->id)
+            ->whereDate('review_date', now()->toDateString())
+            ->where('type', 'morning')
+            ->count());
+
+        $service->createEveningReview($user);
+        $otherUser = User::factory()->create();
+        $service->createMorningReview($otherUser);
+
+        $this->assertSame(3, DailyReview::count());
+    }
+
+    public function test_morning_command_creates_review(): void
+    {
+        $this->fakeSlackImageUpload();
+        config(['services.slack.bot_token' => 'xoxb-test', 'services.slack.default_channel' => 'C123']);
+        [$user, $workspace, $project] = $this->context();
+        $this->task($user, $workspace, $project, ['title' => 'Today task', 'priority' => 'urgent', 'due_date' => now()]);
 
         $this->artisan('taskflow:send-daily-briefing', ['--user_id' => $user->id])->assertSuccessful();
 
@@ -56,16 +82,18 @@ class DailyExecutionTest extends TestCase
             'type' => 'morning',
             'status' => 'sent',
         ]);
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'files.getUploadURLExternal'));
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'files.completeUploadExternal'));
     }
 
     public function test_morning_command_uses_daily_user_env_when_user_option_is_missing(): void
     {
-        Http::fake(['slack.com/*' => Http::response(['ok' => true, 'channel' => 'C123', 'ts' => '123.456'])]);
+        $this->fakeSlackImageUpload();
         config(['services.slack.bot_token' => 'xoxb-test', 'services.slack.default_channel' => 'C123']);
         [$firstUser, $workspace, $project] = $this->context();
         $secondUser = User::factory()->create();
-        $this->task($firstUser, $workspace, $project, ['title' => 'First user task', 'due_date' => now()]);
-        $this->task($secondUser, $workspace, $project, ['title' => 'Second user task', 'due_date' => now()]);
+        $this->task($firstUser, $workspace, $project, ['title' => 'First user task', 'priority' => 'urgent', 'due_date' => now()]);
+        $this->task($secondUser, $workspace, $project, ['title' => 'Second user task', 'priority' => 'urgent', 'due_date' => now()]);
         $this->setDailyUserEnv((string) $secondUser->id);
 
         $this->artisan('taskflow:send-daily-briefing')->assertSuccessful();
@@ -145,6 +173,100 @@ class DailyExecutionTest extends TestCase
         $this->assertStringContainsString('Friday Evening Check-in', $eveningMessage);
         $this->assertStringContainsString("```\nNo. Status    Priority  Due Date     Context", $eveningMessage);
         $this->assertStringContainsString('1   todo      medium', $eveningMessage);
+    }
+
+    public function test_daily_briefing_image_mode_uploads_png_with_short_caption(): void
+    {
+        $this->fakeSlackImageUpload();
+        config(['services.slack.bot_token' => 'xoxb-test', 'services.slack.default_channel' => 'C123']);
+        [$user, $workspace, $project] = $this->context();
+        $this->task($user, $workspace, $project, ['title' => 'Ship launch checklist', 'priority' => 'urgent', 'due_date' => now()]);
+
+        $this->artisan('taskflow:send-daily-briefing', ['--user_id' => $user->id, '--format' => 'image'])->assertSuccessful();
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'files.completeUploadExternal')
+            && str_contains((string) $request->body(), 'Friday Daily Briefing - '.now()->toDateString())
+            && str_contains((string) $request->body(), 'Open: 1 | Overdue: 0 | Due today: 1 | Due this week: 1'));
+    }
+
+    public function test_daily_briefing_removes_duplicate_tasks_across_sections(): void
+    {
+        [$user, $workspace, $project] = $this->context();
+        $task = $this->task($user, $workspace, $project, ['title' => 'Duplicated task', 'priority' => 'urgent', 'due_date' => now()->subDay()]);
+        $review = $this->reviewWithTypedItems($user, [
+            [$task, 'focus'],
+            [$task, 'overdue'],
+        ]);
+
+        $briefing = app(DailyBriefingService::class)->build($review);
+
+        $this->assertCount(1, $briefing['sections']['focus']);
+        $this->assertCount(0, $briefing['sections']['overdue']);
+    }
+
+    public function test_daily_briefing_displayed_tasks_are_capped(): void
+    {
+        [$user, $workspace, $project] = $this->context();
+        $typedTasks = [];
+
+        foreach (range(1, 8) as $index) {
+            $typedTasks[] = [
+                $this->task($user, $workspace, $project, [
+                    'title' => "Overdue {$index}",
+                    'priority' => 'urgent',
+                    'due_date' => now()->subDay(),
+                ]),
+                'overdue',
+            ];
+        }
+
+        $review = $this->reviewWithTypedItems($user, $typedTasks);
+        $briefing = app(DailyBriefingService::class)->build($review, ['limit' => 4]);
+
+        $this->assertCount(4, $briefing['sections']['overdue']);
+    }
+
+    public function test_daily_briefing_portfolio_summary_includes_launch_portfolios(): void
+    {
+        [$user, $workspace, $project] = $this->context();
+        $sayara = Portfolio::create(['workspace_id' => $workspace->id, 'name' => 'SayaraForce', 'slug' => 'sayaraforce']);
+        $church = Portfolio::create(['workspace_id' => $workspace->id, 'name' => 'ChurchForce', 'slug' => 'churchforce']);
+        $project->update(['portfolio_id' => $sayara->id]);
+        $this->task($user, $workspace, $project, ['portfolio_id' => $sayara->id, 'priority' => 'urgent', 'due_date' => now()]);
+        $this->task($user, $workspace, $project, ['portfolio_id' => $church->id, 'priority' => 'high', 'due_date' => now()->subDay()]);
+        $review = app(DailyReviewService::class)->createMorningReview($user, ['priority' => 'urgent-high']);
+
+        $briefing = app(DailyBriefingService::class)->build($review);
+
+        $this->assertSame('SayaraForce', $briefing['portfolio_summary'][0]['portfolio']);
+        $this->assertSame(1, $briefing['portfolio_summary'][0]['due_today']);
+        $this->assertSame('ChurchForce', $briefing['portfolio_summary'][1]['portfolio']);
+        $this->assertSame(1, $briefing['portfolio_summary'][1]['overdue']);
+    }
+
+    public function test_daily_briefing_falls_back_to_text_caption_when_image_generation_fails(): void
+    {
+        config(['services.slack.bot_token' => 'xoxb-test', 'services.slack.default_channel' => 'C123']);
+        Http::fake(['slack.com/api/chat.postMessage' => Http::response(['ok' => true, 'channel' => 'C123', 'ts' => '123.456'])]);
+        $this->app->instance(DailyBriefingImageService::class, new class extends DailyBriefingImageService
+        {
+            public function generate(array $briefing): string
+            {
+                throw new \RuntimeException('Image renderer unavailable.');
+            }
+        });
+        [$user, $workspace, $project] = $this->context();
+        $this->task($user, $workspace, $project, ['priority' => 'urgent', 'due_date' => now()]);
+
+        $this->artisan('taskflow:send-daily-briefing', ['--user_id' => $user->id])->assertSuccessful();
+
+        $this->assertDatabaseHas('daily_reviews', [
+            'user_id' => $user->id,
+            'type' => 'morning',
+            'status' => 'sent',
+        ]);
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'chat.postMessage')
+            && str_contains((string) $request->body(), 'Friday Daily Briefing - '.now()->toDateString()));
     }
 
     public function test_slack_parser_maps_done_move_and_note_commands(): void
@@ -323,6 +445,30 @@ class DailyExecutionTest extends TestCase
         return $review;
     }
 
+    private function reviewWithTypedItems(User $user, array $items): DailyReview
+    {
+        $review = DailyReview::create([
+            'user_id' => $user->id,
+            'review_date' => now()->toDateString(),
+            'type' => 'morning',
+            'status' => 'pending',
+        ]);
+
+        foreach ($items as $index => [$task, $type]) {
+            $review->items()->create([
+                'task_id' => $task->id,
+                'position' => $index + 1,
+                'item_type' => $type,
+                'snapshot_title' => $task->title,
+                'snapshot_status' => $task->status,
+                'snapshot_priority' => $task->priority,
+                'snapshot_due_date' => $task->due_date,
+            ]);
+        }
+
+        return $review->load(['items.task.project', 'items.task.portfolio']);
+    }
+
     private function postSlackCommand(string $text, string $user = 'U123')
     {
         $payload = json_encode(['event' => ['channel' => 'C123', 'user' => $user, 'text' => $text]]);
@@ -341,5 +487,22 @@ class DailyExecutionTest extends TestCase
         putenv("TASKFLOW_DAILY_USER_ID={$value}");
         $_ENV['TASKFLOW_DAILY_USER_ID'] = $value;
         $_SERVER['TASKFLOW_DAILY_USER_ID'] = $value;
+    }
+
+    private function fakeSlackImageUpload(): void
+    {
+        Http::fake([
+            'slack.com/api/files.getUploadURLExternal' => Http::response([
+                'ok' => true,
+                'upload_url' => 'https://uploads.slack.test/daily-briefing',
+                'file_id' => 'F123',
+            ]),
+            'uploads.slack.test/*' => Http::response('', 200),
+            'slack.com/api/files.completeUploadExternal' => Http::response([
+                'ok' => true,
+                'channel' => 'C123',
+                'ts' => '123.456',
+            ]),
+        ]);
     }
 }

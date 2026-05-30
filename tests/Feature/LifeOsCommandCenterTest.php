@@ -266,7 +266,7 @@ class LifeOsCommandCenterTest extends TestCase
         config(['services.slack.bot_token' => 'xoxb-test', 'services.slack.default_channel' => 'C123']);
         Http::fake(['https://slack.com/api/chat.postMessage' => Http::response(['ok' => true, 'ts' => '123.456'])]);
 
-        $this->artisan('taskflow:send-daily-briefing')->assertExitCode(0);
+        $this->artisan('taskflow:send-daily-briefing', ['--format' => 'text'])->assertExitCode(0);
         $this->assertDatabaseHas('daily_reviews', ['user_id' => $user->id, 'type' => 'morning', 'status' => 'sent']);
     }
 

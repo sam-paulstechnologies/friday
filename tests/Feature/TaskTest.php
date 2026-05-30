@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Project;
+use App\Models\Label;
 use App\Models\Task;
 use App\Models\TaskActivity;
 use App\Models\TaskAttachment;
@@ -184,6 +185,110 @@ class TaskTest extends TestCase
 
         $this->assertSame('in_progress', $task->status);
         $this->assertNull($task->completed_at);
+    }
+
+    public function test_task_index_segregates_completed_tasks_from_active_groups(): void
+    {
+        [$user, $workspace, $project] = $this->taskContext();
+        $upcoming = $this->task($user, $workspace, $project, [
+            'title' => 'Upcoming active task',
+            'due_date' => now()->addDay()->toDateString(),
+        ]);
+        $overdue = $this->task($user, $workspace, $project, [
+            'title' => 'Overdue active task',
+            'due_date' => now()->subDay()->toDateString(),
+        ]);
+        $completed = $this->task($user, $workspace, $project, [
+            'title' => 'Completed task',
+            'status' => 'completed',
+            'completed_at' => now(),
+            'due_date' => now()->toDateString(),
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('tasks.index'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('Tasks/Index')
+                ->where('taskGroups.upcoming.0.id', $upcoming->id)
+                ->where('taskGroups.overdue.0.id', $overdue->id)
+                ->where('taskGroups.completed.0.id', $completed->id)
+                ->where('taskCounts.upcoming', 1)
+                ->where('taskCounts.overdue', 1)
+                ->where('taskCounts.completed', 1)
+            );
+    }
+
+    public function test_task_index_all_tab_sorts_active_before_completed_and_hides_archived(): void
+    {
+        [$user, $workspace, $project] = $this->taskContext();
+        $activeSoon = $this->task($user, $workspace, $project, [
+            'title' => 'Active soon',
+            'priority' => 'low',
+            'due_date' => now()->addDay()->toDateString(),
+        ]);
+        $activeLaterUrgent = $this->task($user, $workspace, $project, [
+            'title' => 'Active later urgent',
+            'priority' => 'urgent',
+            'due_date' => now()->addDays(3)->toDateString(),
+        ]);
+        $completedNew = $this->task($user, $workspace, $project, [
+            'title' => 'Completed new',
+            'status' => 'completed',
+            'completed_at' => now(),
+        ]);
+        $completedOld = $this->task($user, $workspace, $project, [
+            'title' => 'Completed old',
+            'status' => 'completed',
+            'completed_at' => now()->subDay(),
+        ]);
+        $archived = $this->task($user, $workspace, $project, [
+            'title' => 'Archived task',
+            'status' => 'archived',
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('tasks.index'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('taskGroups.all.0.id', $activeSoon->id)
+                ->where('taskGroups.all.1.id', $activeLaterUrgent->id)
+                ->where('taskGroups.all.2.id', $completedNew->id)
+                ->where('taskGroups.all.3.id', $completedOld->id)
+                ->where('taskCounts.all', 4)
+            );
+
+        $this->actingAs($user)
+            ->get(route('tasks.index', ['status' => 'archived']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('taskGroups.all.0.id', $archived->id)
+                ->where('taskCounts.all', 1)
+            );
+    }
+
+    public function test_dashboard_upcoming_excludes_completed_tasks(): void
+    {
+        [$user, $workspace, $project] = $this->taskContext();
+        $active = $this->task($user, $workspace, $project, [
+            'title' => 'Dashboard active task',
+            'due_date' => now()->addDay()->toDateString(),
+        ]);
+        $completed = $this->task($user, $workspace, $project, [
+            'title' => 'Dashboard completed task',
+            'status' => 'completed',
+            'completed_at' => now(),
+            'due_date' => now()->addDay()->toDateString(),
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('weeklyFocus.0.id', $active->id)
+                ->where('completedTasks.0.id', $completed->id)
+                ->where('summary.upcoming', 1)
+            );
     }
 
     public function test_comment_can_be_added_to_task(): void
@@ -428,6 +533,308 @@ class TaskTest extends TestCase
         ]);
     }
 
+    public function test_user_cannot_view_another_users_task(): void
+    {
+        [$owner, $workspace, $project] = $this->isolatedContext('owner');
+        [$intruder] = $this->isolatedContext('intruder');
+        $task = $this->task($owner, $workspace, $project);
+
+        $this->actingAs($intruder)
+            ->get(route('tasks.show', $task))
+            ->assertForbidden();
+    }
+
+    public function test_user_cannot_update_another_users_task(): void
+    {
+        [$owner, $workspace, $project] = $this->isolatedContext('owner');
+        [$intruder, $intruderWorkspace, $intruderProject] = $this->isolatedContext('intruder');
+        $task = $this->task($owner, $workspace, $project);
+
+        $this->actingAs($intruder)
+            ->patch(route('tasks.update', $task), [
+                'workspace_id' => $intruderWorkspace->id,
+                'project_id' => $intruderProject->id,
+                'title' => 'Unauthorized edit',
+                'status' => 'in_progress',
+                'priority' => 'urgent',
+                'assignee_id' => $intruder->id,
+            ])
+            ->assertForbidden();
+
+        $this->assertNotSame('Unauthorized edit', $task->refresh()->title);
+    }
+
+    public function test_user_cannot_complete_or_archive_another_users_task(): void
+    {
+        [$owner, $workspace, $project] = $this->isolatedContext('owner');
+        [$intruder] = $this->isolatedContext('intruder');
+        $task = $this->task($owner, $workspace, $project);
+
+        $this->actingAs($intruder)
+            ->patch(route('tasks.complete', $task))
+            ->assertForbidden();
+
+        $this->actingAs($intruder)
+            ->patch(route('tasks.archive', $task))
+            ->assertForbidden();
+
+        $this->assertSame('todo', $task->refresh()->status);
+    }
+
+    public function test_user_cannot_download_another_users_task_attachment(): void
+    {
+        Storage::fake('attachments');
+        [$owner, $workspace, $project] = $this->isolatedContext('owner');
+        [$intruder] = $this->isolatedContext('intruder');
+        $task = $this->task($owner, $workspace, $project);
+        $attachment = $this->attachment($owner, $task);
+
+        $this->actingAs($intruder)
+            ->get(route('task-attachments.download', $attachment))
+            ->assertForbidden();
+    }
+
+    public function test_task_forms_do_not_show_other_users_workspace_project_or_user_options(): void
+    {
+        [$user, $workspace, $project] = $this->isolatedContext('owner');
+        [$otherUser, $otherWorkspace, $otherProject] = $this->isolatedContext('other');
+
+        $this->actingAs($user)
+            ->get(route('tasks.create'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('Tasks/Create')
+                ->has('workspaces', 1)
+                ->where('workspaces.0.id', $workspace->id)
+                ->has('projects', 1)
+                ->where('projects.0.id', $project->id)
+                ->has('users', 1)
+                ->where('users.0.id', $user->id)
+            );
+
+        $task = $this->task($user, $workspace, $project);
+
+        $this->actingAs($user)
+            ->get(route('tasks.edit', $task))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('Tasks/Edit')
+                ->where('workspaces.0.id', $workspace->id)
+                ->where('projects.0.id', $project->id)
+                ->where('users.0.id', $user->id)
+            );
+
+        $this->assertNotSame($otherWorkspace->id, $workspace->id);
+        $this->assertNotSame($otherProject->id, $project->id);
+        $this->assertNotSame($otherUser->id, $user->id);
+    }
+
+    public function test_user_can_create_subtask_under_accessible_task(): void
+    {
+        [$user, $workspace, $project] = $this->taskContext();
+        $task = $this->task($user, $workspace, $project);
+
+        $this->actingAs($user)
+            ->post(route('tasks.subtasks.store', $task), [
+                'title' => 'Draft checklist items',
+                'due_date' => '2026-06-03',
+            ])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('tasks', [
+            'workspace_id' => $workspace->id,
+            'project_id' => $project->id,
+            'parent_task_id' => $task->id,
+            'title' => 'Draft checklist items',
+            'status' => 'todo',
+        ]);
+    }
+
+    public function test_user_can_complete_and_reopen_subtask_and_progress_updates(): void
+    {
+        [$user, $workspace, $project] = $this->taskContext();
+        $task = $this->task($user, $workspace, $project);
+        $first = $this->task($user, $workspace, $project, ['title' => 'First subtask', 'parent_task_id' => $task->id]);
+        $this->task($user, $workspace, $project, ['title' => 'Second subtask', 'parent_task_id' => $task->id]);
+
+        $this->actingAs($user)
+            ->patch(route('tasks.subtasks.status', [$task, $first]), ['status' => 'completed'])
+            ->assertRedirect();
+
+        $this->assertSame('completed', $first->refresh()->status);
+
+        $this->actingAs($user)
+            ->get(route('tasks.show', $task))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('task.subtask_progress.total', 2)
+                ->where('task.subtask_progress.completed', 1)
+            );
+
+        $this->actingAs($user)
+            ->patch(route('tasks.subtasks.status', [$task, $first]), ['status' => 'todo'])
+            ->assertRedirect();
+
+        $this->assertSame('todo', $first->refresh()->status);
+    }
+
+    public function test_user_cannot_create_or_update_another_users_subtask(): void
+    {
+        [$owner, $workspace, $project] = $this->isolatedContext('owner');
+        [$intruder] = $this->isolatedContext('intruder');
+        $task = $this->task($owner, $workspace, $project);
+        $subtask = $this->task($owner, $workspace, $project, ['parent_task_id' => $task->id]);
+
+        $this->actingAs($intruder)
+            ->post(route('tasks.subtasks.store', $task), ['title' => 'Nope'])
+            ->assertForbidden();
+
+        $this->actingAs($intruder)
+            ->patch(route('tasks.subtasks.status', [$task, $subtask]), ['status' => 'completed'])
+            ->assertForbidden();
+
+        $this->assertSame('todo', $subtask->refresh()->status);
+    }
+
+    public function test_user_can_create_attach_and_detach_labels_in_own_workspace(): void
+    {
+        [$user, $workspace, $project] = $this->taskContext();
+
+        $this->actingAs($user)->post(route('tasks.store'), [
+            'workspace_id' => $workspace->id,
+            'project_id' => $project->id,
+            'title' => 'Labelled task',
+            'status' => 'todo',
+            'priority' => 'medium',
+            'assignee_id' => $user->id,
+            'new_labels' => 'Launch, Client',
+        ])->assertRedirect();
+
+        $task = Task::where('title', 'Labelled task')->firstOrFail();
+        $this->assertSame(['Client', 'Launch'], $task->labels()->orderBy('name')->pluck('name')->all());
+
+        $label = Label::where('workspace_id', $workspace->id)->where('name', 'Launch')->firstOrFail();
+
+        $this->actingAs($user)->patch(route('tasks.update', $task), [
+            'workspace_id' => $workspace->id,
+            'project_id' => $project->id,
+            'title' => 'Labelled task',
+            'status' => 'todo',
+            'priority' => 'medium',
+            'assignee_id' => $user->id,
+            'label_ids' => [$label->id],
+        ])->assertRedirect();
+
+        $this->assertSame(['Launch'], $task->refresh()->labels()->pluck('name')->all());
+    }
+
+    public function test_user_cannot_see_or_use_other_workspace_labels(): void
+    {
+        [$user, $workspace, $project] = $this->isolatedContext('owner');
+        [$otherUser, $otherWorkspace] = $this->isolatedContext('other');
+        $otherLabel = Label::create(['workspace_id' => $otherWorkspace->id, 'name' => 'Other label']);
+
+        $this->actingAs($user)
+            ->get(route('tasks.create'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('labels', [])
+            );
+
+        $this->actingAs($user)->post(route('tasks.store'), [
+            'workspace_id' => $workspace->id,
+            'project_id' => $project->id,
+            'title' => 'Attempt leaked label',
+            'status' => 'todo',
+            'priority' => 'medium',
+            'assignee_id' => $user->id,
+            'label_ids' => [$otherLabel->id],
+        ])->assertInvalid(['label_ids.0']);
+
+        $this->assertNotSame($otherUser->id, $user->id);
+    }
+
+    public function test_recurring_task_creates_next_daily_weekly_and_monthly_occurrences(): void
+    {
+        [$user, $workspace, $project] = $this->taskContext();
+
+        foreach ([
+            'daily' => '2026-06-02',
+            'weekly' => '2026-06-08',
+            'monthly' => '2026-07-01',
+        ] as $type => $nextDate) {
+            $task = $this->task($user, $workspace, $project, [
+                'title' => "Recurring {$type}",
+                'due_date' => '2026-06-01',
+                'recurrence_type' => $type,
+            ]);
+
+            $this->actingAs($user)->patch(route('tasks.complete', $task))->assertRedirect();
+
+            $this->assertTrue(Task::query()
+                ->where('title', "Recurring {$type}")
+                ->where('status', 'todo')
+                ->where('workspace_id', $workspace->id)
+                ->where('project_id', $project->id)
+                ->where('recurring_parent_id', $task->id)
+                ->whereDate('due_date', $nextDate)
+                ->exists());
+        }
+    }
+
+    public function test_non_recurring_task_does_not_create_duplicate_on_completion(): void
+    {
+        [$user, $workspace, $project] = $this->taskContext();
+        $task = $this->task($user, $workspace, $project, ['title' => 'One-off task', 'due_date' => '2026-06-01']);
+
+        $this->actingAs($user)->patch(route('tasks.complete', $task))->assertRedirect();
+
+        $this->assertSame(1, Task::where('title', 'One-off task')->count());
+    }
+
+    public function test_user_cannot_trigger_recurrence_on_another_users_task(): void
+    {
+        [$owner, $workspace, $project] = $this->isolatedContext('owner');
+        [$intruder] = $this->isolatedContext('intruder');
+        $task = $this->task($owner, $workspace, $project, [
+            'title' => 'Protected recurring task',
+            'due_date' => '2026-06-01',
+            'recurrence_type' => 'daily',
+        ]);
+
+        $this->actingAs($intruder)->patch(route('tasks.complete', $task))->assertForbidden();
+
+        $this->assertSame(1, Task::where('title', 'Protected recurring task')->count());
+    }
+
+    public function test_archived_task_is_hidden_from_active_list_and_can_be_restored(): void
+    {
+        [$user, $workspace, $project] = $this->taskContext();
+        $task = $this->task($user, $workspace, $project, ['title' => 'Restorable task']);
+
+        $this->actingAs($user)->patch(route('tasks.archive', $task))->assertRedirect();
+
+        $this->assertDatabaseHas('tasks', ['id' => $task->id, 'status' => 'archived']);
+        $this->actingAs($user)
+            ->get(route('tasks.index'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->where('taskCounts.all', 0));
+
+        $this->actingAs($user)->patch(route('tasks.restore', $task))->assertRedirect(route('tasks.show', $task));
+        $this->assertSame('todo', $task->refresh()->status);
+    }
+
+    public function test_user_cannot_restore_another_users_task(): void
+    {
+        [$owner, $workspace, $project] = $this->isolatedContext('owner');
+        [$intruder] = $this->isolatedContext('intruder');
+        $task = $this->task($owner, $workspace, $project, ['status' => 'archived']);
+
+        $this->actingAs($intruder)->patch(route('tasks.restore', $task))->assertForbidden();
+
+        $this->assertSame('archived', $task->refresh()->status);
+    }
+
     private function taskContext(): array
     {
         $user = User::factory()->create();
@@ -447,6 +854,44 @@ class TaskTest extends TestCase
             'owner_id' => $user->id,
             'name' => 'Product Launch Plan',
             'slug' => 'product-launch-plan',
+            'status' => 'active',
+            'visibility' => 'workspace',
+        ]);
+
+        $workspace->users()->attach($user->id, [
+            'role' => 'owner',
+            'joined_at' => now(),
+        ]);
+        $team->users()->attach($user->id, [
+            'role' => 'lead',
+            'joined_at' => now(),
+        ]);
+
+        return [$user, $workspace, $project];
+    }
+
+    private function isolatedContext(string $slug): array
+    {
+        $user = User::factory()->create([
+            'email' => "{$slug}@example.com",
+            'name' => ucfirst($slug).' User',
+        ]);
+        $workspace = Workspace::create([
+            'name' => ucfirst($slug).' Workspace',
+            'slug' => "{$slug}-workspace",
+            'created_by' => $user->id,
+        ]);
+        $team = Team::create([
+            'workspace_id' => $workspace->id,
+            'name' => ucfirst($slug).' Team',
+            'slug' => "{$slug}-team",
+        ]);
+        $project = Project::create([
+            'workspace_id' => $workspace->id,
+            'team_id' => $team->id,
+            'owner_id' => $user->id,
+            'name' => ucfirst($slug).' Project',
+            'slug' => "{$slug}-project",
             'status' => 'active',
             'visibility' => 'workspace',
         ]);

@@ -5,15 +5,19 @@ namespace App\Http\Controllers;
 use App\Models\Area;
 use App\Models\Portfolio;
 use App\Models\Task;
+use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class PortfolioController extends Controller
 {
-    public function index(): Response
+    public function index(Request $request): Response
     {
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+
         $areas = Area::query()
             ->with(['portfolios' => fn ($query) => $query
+                ->whereIn('workspace_id', $workspaceIds)
                 ->withCount($this->portfolioCountQueries())
                 ->orderBy('position')])
             ->orderBy('position')
@@ -30,16 +34,20 @@ class PortfolioController extends Controller
         ]);
     }
 
-    public function show(Portfolio $portfolio): Response
+    public function show(Request $request, Portfolio $portfolio): Response
     {
+        abort_unless($request->user()->canAccessWorkspace($portfolio->workspace_id), 403);
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+
         $portfolio->load([
             'area:id,name,color',
-            'projects' => fn ($query) => $query->with(['owner:id,name'])->active()->orderBy('sort_order')->latest(),
+            'projects' => fn ($query) => $query->whereIn('workspace_id', $workspaceIds)->with(['owner:id,name'])->active()->orderBy('sort_order')->latest(),
         ])->loadCount($this->portfolioCountQueries());
 
         $tasks = Task::query()
             ->with(['workspace:id,name', 'project:id,name', 'area:id,name', 'assignee:id,name'])
             ->where('portfolio_id', $portfolio->id)
+            ->whereIn('workspace_id', $workspaceIds)
             ->active()
             ->orderByRaw('due_date is null')
             ->orderBy('due_date')

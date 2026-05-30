@@ -9,6 +9,12 @@
 
 ## About Laravel
 
+## TaskFlow Notes
+
+### Slack Daily Briefing Images
+
+`taskflow:send-daily-briefing` defaults to `--format=image` and generates a PNG summary before sending it to Slack with a short caption. The PNG renderer uses the PHP GD extension, so production servers must have `ext-gd` enabled. The Slack app token must also have file upload permissions for Slack's external upload flow (`files.getUploadURLExternal` and `files.completeUploadExternal`) in addition to posting messages.
+
 Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
 
 - [Simple, fast routing engine](https://laravel.com/docs/routing).

@@ -11,15 +11,21 @@ use App\Models\Risk;
 use App\Models\Task;
 use App\Models\WaitingItem;
 use App\Services\DailyReview\DailyReviewService;
+use App\Services\Spiritual\SpiritualReadingSummaryService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class DashboardController extends Controller
 {
-    public function __invoke(Request $request, DailyReviewService $dailyReviewService): Response
+    public function __invoke(
+        Request $request,
+        DailyReviewService $dailyReviewService,
+        SpiritualReadingSummaryService $spiritualReadingSummaryService
+    ): Response
     {
         $user = $request->user();
+        $workspaceIds = $user->accessibleWorkspaceIds();
         $groups = $dailyReviewService->collectTodayTasks($user);
         $focus = $dailyReviewService->selectTopFocusItems($groups);
 
@@ -34,6 +40,18 @@ class DashboardController extends Controller
             ->orderBy('due_date')
             ->get()
             ->groupBy('task_type');
+
+        $completedTasks = Task::query()
+            ->with(['area:id,name', 'portfolio:id,name', 'project:id,name', 'workspace:id,name'])
+            ->where(function ($query) use ($user): void {
+                $query->where('assignee_id', $user->id)->orWhere('reporter_id', $user->id);
+            })
+            ->where('status', 'completed')
+            ->orderByRaw('completed_at is null')
+            ->orderByDesc('completed_at')
+            ->orderByDesc('updated_at')
+            ->limit(8)
+            ->get();
 
         return Inertia::render('Dashboard', [
             'date' => now()->format('l, F j, Y'),
@@ -51,6 +69,8 @@ class DashboardController extends Controller
             'overdue' => $groups->get('overdue')->map(fn (Task $task) => $this->taskResource($task))->values(),
             'dueToday' => $groups->get('due_today')->map(fn (Task $task) => $this->taskResource($task))->values(),
             'weeklyFocus' => $groups->get('upcoming')->map(fn (Task $task) => $this->taskResource($task))->values(),
+            'completedTasks' => $completedTasks->map(fn (Task $task) => $this->taskResource($task))->values(),
+            'spiritualReading' => $spiritualReadingSummaryService->forUser($user),
             'commandCenter' => [
                 'waiting' => $this->commandObjects(WaitingItem::class, $user->id, 'open', $commandTasks->get('waiting_for', collect())),
                 'decisions' => $this->commandObjects(Decision::class, $user->id, 'pending', $commandTasks->get('decision', collect())),
@@ -62,11 +82,16 @@ class DashboardController extends Controller
                 'id' => $area->id,
                 'name' => $area->name,
                 'color' => $area->color,
-                'open_tasks' => $area->tasks()->active()->count(),
-                'overdue_tasks' => $area->tasks()->active()->overdue()->count(),
-                'projects' => $area->projects()->active()->count(),
+                'open_tasks' => $area->tasks()->whereIn('workspace_id', $workspaceIds)->active()->count(),
+                'overdue_tasks' => $area->tasks()->whereIn('workspace_id', $workspaceIds)->active()->overdue()->count(),
+                'projects' => $area->projects()->whereIn('workspace_id', $workspaceIds)->active()->count(),
             ]),
             'portfolioProgress' => Portfolio::query()
+                ->when(
+                    $workspaceIds !== [],
+                    fn ($query) => $query->whereIn('workspace_id', $workspaceIds),
+                    fn ($query) => $query->whereRaw('1 = 0'),
+                )
                 ->whereIn('name', ['Publicis Digitas', 'SayaraForce', 'ChurchForce', 'The Pauls Technologies', 'UAE Realtor Agents App'])
                 ->with('area:id,name')
                 ->orderBy('position')
@@ -92,6 +117,7 @@ class DashboardController extends Controller
             'priority' => $task->priority,
             'task_type' => $task->task_type,
             'due_date' => $task->due_date?->toDateString(),
+            'completed_at' => $task->completed_at?->toDateTimeString(),
             'area' => $task->area?->only(['id', 'name']),
             'portfolio' => $task->portfolio?->only(['id', 'name']),
             'project' => $task->project?->only(['id', 'name']),

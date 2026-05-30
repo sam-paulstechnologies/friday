@@ -266,6 +266,23 @@ class NotificationReminderCalendarTest extends TestCase
             'visibility' => 'workspace',
         ]);
 
+        $workspace->users()->attach($reporter->id, [
+            'role' => 'owner',
+            'joined_at' => now(),
+        ]);
+        $workspace->users()->attach($assignee->id, [
+            'role' => 'member',
+            'joined_at' => now(),
+        ]);
+        $team->users()->attach($reporter->id, [
+            'role' => 'lead',
+            'joined_at' => now(),
+        ]);
+        $team->users()->attach($assignee->id, [
+            'role' => 'member',
+            'joined_at' => now(),
+        ]);
+
         return [$reporter, $workspace, $project, $assignee];
     }
 

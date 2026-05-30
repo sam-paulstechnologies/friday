@@ -5,6 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\DailyReview;
 use App\Models\DailyReviewItem;
 use App\Models\Task;
+use App\Models\User;
+use App\Services\Ai\AiBrainService;
+use App\Services\Ai\AiRecommendationService;
+use App\Services\Ai\AiTranscriptionService;
 use App\Services\Slack\SlackCommandParser;
 use App\Services\Slack\SlackService;
 use Illuminate\Http\Request;
@@ -12,8 +16,14 @@ use Illuminate\Support\Facades\Log;
 
 class SlackWebhookController extends Controller
 {
-    public function __invoke(Request $request, SlackService $slackService, SlackCommandParser $parser)
-    {
+    public function __invoke(
+        Request $request,
+        SlackService $slackService,
+        SlackCommandParser $parser,
+        AiBrainService $aiBrain,
+        AiRecommendationService $recommendations,
+        AiTranscriptionService $transcription,
+    ) {
         if (! $slackService->verifySignature($request)) {
             abort(403);
         }
@@ -44,6 +54,41 @@ class SlackWebhookController extends Controller
         }
 
         Log::info('Slack daily review message received.', ['channel' => $channel, 'user' => $user, 'text' => $text]);
+
+        $appUser = $this->resolveUser();
+
+        if ($approval = $this->parseAiApproval($text)) {
+            $message = match ($approval['action']) {
+                'show' => $recommendations->formatPending($appUser?->id),
+                'approve' => $recommendations->applySelection($appUser?->id, $approval['selection']),
+                'reject' => $recommendations->rejectSelection($appUser?->id, $approval['selection']),
+            };
+
+            $slackService->sendMessage((string) $channel, $message);
+
+            return response()->json(['ok' => true]);
+        }
+
+        if ($voicePath = $this->downloadVoiceAttachment($event, $slackService)) {
+            $transcribed = $transcription->transcribe($voicePath);
+
+            if (! $transcribed) {
+                $slackService->sendMessage((string) $channel, 'I could not transcribe the voice note. Please send it again or type the instruction.');
+
+                return response()->json(['ok' => true]);
+            }
+
+            $slackService->sendMessage((string) $channel, 'I heard: '.$transcribed);
+            $aiBrain->sendSlackAnswer((string) $channel, $transcribed, $appUser, $slackService, ['source' => 'slack_voice']);
+
+            return response()->json(['ok' => true]);
+        }
+
+        if ($aiBrain->isAiPrompt($text)) {
+            $aiBrain->sendSlackAnswer((string) $channel, $text, $appUser, $slackService, ['source' => 'slack_text']);
+
+            return response()->json(['ok' => true]);
+        }
 
         $command = $parser->parse($text);
 
@@ -194,6 +239,51 @@ class SlackWebhookController extends Controller
             '`waiting 4 waiting for client feedback`',
             '`note 2 tested partially, continue tomorrow`',
             '`skip 5`',
+            '`friday what should I focus on today?`',
+            '`approve ai 1` / `reject ai all` / `show ai pending`',
         ]);
+    }
+
+    private function parseAiApproval(string $text): ?array
+    {
+        if (preg_match('/^\s*show\s+ai\s+pending\s*$/i', $text)) {
+            return ['action' => 'show', 'selection' => 'all'];
+        }
+
+        if (preg_match('/^\s*(approve|reject)\s+ai\s+(.+)\s*$/i', $text, $matches)) {
+            return ['action' => strtolower($matches[1]), 'selection' => trim($matches[2])];
+        }
+
+        return null;
+    }
+
+    private function downloadVoiceAttachment(array $event, SlackService $slackService): ?string
+    {
+        foreach (($event['files'] ?? []) as $file) {
+            $mime = strtolower((string) ($file['mimetype'] ?? $file['filetype'] ?? ''));
+
+            if (! str_contains($mime, 'audio') && ! str_contains($mime, 'ogg') && ! str_contains($mime, 'mpeg')) {
+                continue;
+            }
+
+            $url = $file['url_private_download'] ?? $file['url_private'] ?? null;
+
+            if ($url) {
+                return $slackService->downloadFile((string) $url);
+            }
+        }
+
+        return null;
+    }
+
+    private function resolveUser(): ?User
+    {
+        $dailyUserId = env('TASKFLOW_DAILY_USER_ID');
+
+        if ($dailyUserId) {
+            return User::find((int) $dailyUserId);
+        }
+
+        return User::query()->oldest('id')->first();
     }
 }

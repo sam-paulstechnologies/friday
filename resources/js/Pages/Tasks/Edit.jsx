@@ -2,7 +2,7 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head } from '@inertiajs/react';
 import TaskForm from './Partials/TaskForm';
 
-export default function Edit({ task, workspaces, projects, users, statuses, priorities }) {
+export default function Edit({ task, workspaces, projects, users, labels = [], statuses, priorities, recurrenceTypes = [] }) {
     return (
         <AuthenticatedLayout title="Edit Task" subtitle={task.title}>
             <Head title={`Edit ${task.title}`} />
@@ -13,8 +13,10 @@ export default function Edit({ task, workspaces, projects, users, statuses, prio
                     workspaces={workspaces}
                     projects={projects}
                     users={users}
+                    labels={labels}
                     statuses={statuses}
                     priorities={priorities}
+                    recurrenceTypes={recurrenceTypes}
                     submitLabel="Save Changes"
                 />
             </div>

@@ -16,8 +16,14 @@ class CalendarController extends Controller
         $month = $request->query('month', now()->format('Y-m'));
         $start = CarbonImmutable::createFromFormat('Y-m-d', "{$month}-01")->startOfMonth();
         $end = $start->endOfMonth();
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
 
         $taskEvents = Task::query()
+            ->when(
+                $workspaceIds !== [],
+                fn ($query) => $query->whereIn('workspace_id', $workspaceIds),
+                fn ($query) => $query->whereRaw('1 = 0'),
+            )
             ->whereNotIn('status', ['archived'])
             ->where(function ($query) use ($start, $end): void {
                 $query->whereBetween('start_date', [$start->toDateString(), $end->toDateString()])
@@ -39,6 +45,11 @@ class CalendarController extends Controller
             });
 
         $projectEvents = Project::query()
+            ->when(
+                $workspaceIds !== [],
+                fn ($query) => $query->whereIn('workspace_id', $workspaceIds),
+                fn ($query) => $query->whereRaw('1 = 0'),
+            )
             ->where('status', '!=', 'archived')
             ->where(function ($query) use ($start, $end): void {
                 $query->whereBetween('start_date', [$start->toDateString(), $end->toDateString()])

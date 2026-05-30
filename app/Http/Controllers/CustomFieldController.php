@@ -7,6 +7,7 @@ use App\Models\CustomFieldValue;
 use App\Models\Task;
 use App\Models\Workspace;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -14,12 +15,15 @@ use Inertia\Response;
 
 class CustomFieldController extends Controller
 {
-    public function index(): Response
+    public function index(Request $request): Response
     {
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+
         return Inertia::render('Admin/CustomFields/Index', [
-            'workspaces' => Workspace::query()->select(['id', 'name'])->orderBy('name')->get(),
+            'workspaces' => Workspace::query()->select(['id', 'name'])->whereIn('id', $workspaceIds)->orderBy('name')->get(),
             'customFields' => CustomField::query()
                 ->with('workspace:id,name')
+                ->whereIn('workspace_id', $workspaceIds)
                 ->latest()
                 ->get()
                 ->map(fn (CustomField $field) => $this->fieldResource($field)),
@@ -30,13 +34,17 @@ class CustomFieldController extends Controller
 
     public function store(Request $request)
     {
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+
         $data = $request->validate([
-            'workspace_id' => ['required', 'integer', Rule::exists('workspaces', 'id')],
+            'workspace_id' => ['required', 'integer', Rule::exists('workspaces', 'id')->where(fn ($query) => $query->whereIn('id', $workspaceIds))],
             'name' => ['required', 'string', 'max:255'],
             'field_type' => ['required', Rule::in(CustomField::FIELD_TYPES)],
             'applies_to' => ['required', Rule::in(CustomField::APPLIES_TO)],
             'options' => ['nullable', 'string', 'max:5000'],
         ]);
+
+        Gate::authorize('create', [CustomField::class, Workspace::findOrFail($data['workspace_id'])]);
 
         CustomField::create([
             'workspace_id' => $data['workspace_id'],
@@ -52,6 +60,8 @@ class CustomFieldController extends Controller
 
     public function updateTaskValues(Request $request, Task $task)
     {
+        Gate::authorize('update', $task);
+
         $fields = CustomField::query()
             ->where('workspace_id', $task->workspace_id)
             ->whereIn('applies_to', ['task', 'both'])

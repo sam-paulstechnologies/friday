@@ -6,6 +6,7 @@ use App\Models\Project;
 use App\Models\Task;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -13,6 +14,8 @@ class ProjectTimelineController extends Controller
 {
     public function __invoke(Project $project): Response
     {
+        Gate::authorize('view', $project);
+
         $project->load(['workspace:id,name', 'tasks' => fn ($query) => $query
             ->with('assignee:id,name')
             ->where('status', '!=', 'archived')

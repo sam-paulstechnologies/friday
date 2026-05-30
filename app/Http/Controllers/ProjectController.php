@@ -8,8 +8,10 @@ use App\Models\Portfolio;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\Team;
+use App\Models\User;
 use App\Models\Workspace;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -20,6 +22,7 @@ class ProjectController extends Controller
     public function index(Request $request): Response
     {
         $filters = $request->only(['search', 'status', 'visibility']);
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
 
         $projects = Project::query()
             ->with(['workspace:id,name', 'team:id,name', 'owner:id,name', 'area:id,name,color', 'portfolio:id,name'])
@@ -27,6 +30,11 @@ class ProjectController extends Controller
                 'tasks as open_tasks_count' => fn ($query) => $query->active(),
                 'tasks as completed_tasks_count' => fn ($query) => $query->where('status', 'completed'),
             ])
+            ->when(
+                $workspaceIds !== [],
+                fn ($query) => $query->whereIn('workspace_id', $workspaceIds),
+                fn ($query) => $query->whereRaw('1 = 0'),
+            )
             ->when($filters['search'] ?? null, function ($query, string $search): void {
                 $query->where(function ($query) use ($search): void {
                     $query->where('name', 'like', "%{$search}%")
@@ -34,6 +42,7 @@ class ProjectController extends Controller
                 });
             })
             ->when($filters['status'] ?? null, fn ($query, string $status) => $query->where('status', $status))
+            ->when(! ($filters['status'] ?? null), fn ($query) => $query->where('status', '!=', 'archived'))
             ->when($filters['visibility'] ?? null, fn ($query, string $visibility) => $query->where('visibility', $visibility))
             ->latest()
             ->get()
@@ -58,11 +67,20 @@ class ProjectController extends Controller
 
     public function store(Request $request)
     {
+        Gate::authorize('create', Project::class);
+
         $data = $this->validatedProjectData($request);
         $data['owner_id'] = $request->user()->id;
         $data['slug'] = $this->uniqueSlug($data['name'], (int) $data['workspace_id']);
 
         $project = Project::create($data);
+        $project->members()->syncWithoutDetaching([
+            $request->user()->id => [
+                'role' => 'owner',
+                'added_by' => $request->user()->id,
+            ],
+        ]);
+        $this->logActivity($project, $request->user()->id, 'project_created', 'Project was created.');
 
         return redirect()
             ->route('projects.show', $project)
@@ -71,27 +89,41 @@ class ProjectController extends Controller
 
     public function show(Project $project): Response
     {
+        Gate::authorize('view', $project);
+
         $project->load([
             'workspace:id,name',
             'team:id,name',
             'owner:id,name',
             'area:id,name,color',
             'portfolio:id,name',
+            'members:id,name',
+            'activities' => fn ($query) => $query->with('user:id,name')->latest()->limit(20),
             'tasks' => fn ($query) => $query
-                ->with(['assignee:id,name', 'area:id,name', 'portfolio:id,name'])
+                ->with(['assignee:id,name', 'area:id,name', 'portfolio:id,name', 'labels:id,name,color'])
                 ->whereNull('parent_task_id')
                 ->orderBy('position')
                 ->latest(),
         ]);
 
+        $memberIds = $project->members->pluck('id')->push($project->owner_id)->filter()->unique();
+        $availableMembers = $project->workspace?->users()
+            ->select(['users.id', 'users.name'])
+            ->whereNotIn('users.id', $memberIds)
+            ->orderBy('users.name')
+            ->get() ?? collect();
+
         return Inertia::render('Projects/Show', [
             'project' => $this->projectResource($project),
             'tasks' => $project->tasks->map(fn (Task $task) => $this->taskResource($task)),
+            'availableMembers' => $availableMembers,
         ]);
     }
 
     public function edit(Project $project): Response
     {
+        Gate::authorize('update', $project);
+
         $project->load(['workspace:id,name', 'team:id,name', 'owner:id,name', 'area:id,name,color', 'portfolio:id,name']);
 
         return Inertia::render('Projects/Edit', [
@@ -102,6 +134,8 @@ class ProjectController extends Controller
 
     public function update(Request $request, Project $project)
     {
+        Gate::authorize('update', $project);
+
         $data = $this->validatedProjectData($request);
 
         if ($project->name !== $data['name'] || $project->workspace_id !== (int) $data['workspace_id']) {
@@ -109,6 +143,7 @@ class ProjectController extends Controller
         }
 
         $project->update($data);
+        $this->logActivity($project, $request->user()->id, 'project_updated', 'Project was updated.');
 
         return redirect()
             ->route('projects.show', $project)
@@ -117,20 +152,37 @@ class ProjectController extends Controller
 
     public function archive(Project $project)
     {
+        Gate::authorize('delete', $project);
+
         $project->update(['status' => 'archived']);
+        $this->logActivity($project, request()->user()->id, 'project_archived', 'Project was archived.');
 
         return redirect()
             ->route('projects.index')
             ->with('success', 'Project archived.');
     }
 
+    public function restore(Project $project)
+    {
+        Gate::authorize('update', $project);
+
+        $project->update(['status' => 'active']);
+        $this->logActivity($project, request()->user()->id, 'project_restored', 'Project was restored from archive.');
+
+        return redirect()
+            ->route('projects.show', $project)
+            ->with('success', 'Project restored.');
+    }
+
     private function validatedProjectData(Request $request): array
     {
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+
         return $request->validate([
-            'workspace_id' => ['required', 'integer', Rule::exists('workspaces', 'id')],
+            'workspace_id' => ['required', 'integer', Rule::exists('workspaces', 'id')->where(fn ($query) => $query->whereIn('id', $workspaceIds))],
             'area_id' => ['nullable', 'integer', Rule::exists('areas', 'id')],
             'portfolio_id' => ['nullable', 'integer', Rule::exists('portfolios', 'id')],
-            'team_id' => ['nullable', 'integer', Rule::exists('teams', 'id')],
+            'team_id' => ['nullable', 'integer', Rule::exists('teams', 'id')->where(fn ($query) => $query->whereIn('workspace_id', $workspaceIds))],
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'status' => ['required', Rule::in(Project::STATUSES)],
@@ -146,15 +198,19 @@ class ProjectController extends Controller
 
     private function formOptions(): array
     {
+        $workspaceIds = request()->user()?->accessibleWorkspaceIds() ?? [];
+
         return [
             'workspaces' => Workspace::query()
                 ->select(['id', 'name'])
+                ->whereIn('id', $workspaceIds)
                 ->orderBy('name')
                 ->get(),
             'areas' => Area::query()->select(['id', 'name'])->orderBy('position')->get(),
-            'portfolios' => Portfolio::query()->select(['id', 'area_id', 'name'])->orderBy('name')->get(),
+            'portfolios' => Portfolio::query()->select(['id', 'area_id', 'name'])->whereIn('workspace_id', $workspaceIds)->orderBy('name')->get(),
             'teams' => Team::query()
                 ->select(['id', 'workspace_id', 'name'])
+                ->whereIn('workspace_id', $workspaceIds)
                 ->orderBy('name')
                 ->get(),
             'statuses' => Project::STATUSES,
@@ -204,6 +260,27 @@ class ProjectController extends Controller
                 'id' => $project->owner->id,
                 'name' => $project->owner->name,
             ] : null,
+            'members' => $project->relationLoaded('members')
+                ? $project->members->map(fn (User $user) => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'role' => $user->pivot?->role,
+                ])->values()
+                : [],
+            'activities' => $project->relationLoaded('activities')
+                ? $project->activities->map(fn ($activity) => [
+                    'id' => $activity->id,
+                    'action' => $activity->action,
+                    'description' => $activity->description,
+                    'old_value' => $activity->old_value,
+                    'new_value' => $activity->new_value,
+                    'created_at' => $activity->created_at?->toDateTimeString(),
+                    'user' => $activity->user ? [
+                        'id' => $activity->user->id,
+                        'name' => $activity->user->name,
+                    ] : null,
+                ])->values()
+                : [],
             'open_tasks_count' => $project->open_tasks_count ?? null,
             'completed_tasks_count' => $project->completed_tasks_count ?? null,
         ];
@@ -229,6 +306,13 @@ class ProjectController extends Controller
                 'id' => $task->assignee->id,
                 'name' => $task->assignee->name,
             ] : null,
+            'labels' => $task->relationLoaded('labels')
+                ? $task->labels->map(fn ($label) => [
+                    'id' => $label->id,
+                    'name' => $label->name,
+                    'color' => $label->color,
+                ])->values()
+                : [],
         ];
     }
 
@@ -250,5 +334,22 @@ class ProjectController extends Controller
         }
 
         return $slug;
+    }
+
+    private function logActivity(
+        Project $project,
+        ?int $userId,
+        string $action,
+        ?string $description = null,
+        ?string $oldValue = null,
+        ?string $newValue = null,
+    ): void {
+        $project->activities()->create([
+            'user_id' => $userId,
+            'action' => $action,
+            'description' => $description,
+            'old_value' => $oldValue,
+            'new_value' => $newValue,
+        ]);
     }
 }

@@ -7,6 +7,7 @@ use App\Models\Task;
 use App\Models\TaskAttachment;
 use App\Notifications\TaskFlowNotification;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\File;
@@ -15,6 +16,8 @@ class TaskAttachmentController extends Controller
 {
     public function store(Request $request, Task $task)
     {
+        Gate::authorize('update', $task);
+
         $data = $request->validate([
             'file' => [
                 'required',
@@ -58,6 +61,8 @@ class TaskAttachmentController extends Controller
 
     public function download(TaskAttachment $attachment)
     {
+        Gate::authorize('view', $attachment);
+
         abort_unless(Storage::disk('attachments')->exists($attachment->path), 404);
 
         return Storage::disk('attachments')->download(
@@ -69,7 +74,7 @@ class TaskAttachmentController extends Controller
 
     public function destroy(Request $request, TaskAttachment $attachment)
     {
-        abort_unless($attachment->user_id === $request->user()->id, 403);
+        Gate::authorize('delete', $attachment);
 
         $task = $attachment->task;
         $originalName = $attachment->original_name;

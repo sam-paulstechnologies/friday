@@ -4,24 +4,27 @@ namespace App\Http\Controllers;
 
 use App\Models\Area;
 use App\Models\Task;
+use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class AreaController extends Controller
 {
-    public function index(): Response
+    public function index(Request $request): Response
     {
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+
         $areas = Area::query()
             ->withCount(['portfolios', 'projects'])
             ->orderBy('position')
             ->get()
             ->map(fn (Area $area) => [
                 ...$this->areaResource($area),
-                'portfolio_count' => $area->portfolios_count,
-                'project_count' => $area->projects_count,
-                'open_task_count' => $area->tasks()->active()->count(),
-                'overdue_task_count' => $area->tasks()->active()->overdue()->count(),
-                'due_today_count' => $area->tasks()->active()->dueToday()->count(),
+                'portfolio_count' => $area->portfolios()->whereIn('workspace_id', $workspaceIds)->count(),
+                'project_count' => $area->projects()->whereIn('workspace_id', $workspaceIds)->count(),
+                'open_task_count' => $area->tasks()->whereIn('workspace_id', $workspaceIds)->active()->count(),
+                'overdue_task_count' => $area->tasks()->whereIn('workspace_id', $workspaceIds)->active()->overdue()->count(),
+                'due_today_count' => $area->tasks()->whereIn('workspace_id', $workspaceIds)->active()->dueToday()->count(),
             ]);
 
         return Inertia::render('Areas/Index', [
@@ -29,10 +32,13 @@ class AreaController extends Controller
         ]);
     }
 
-    public function show(Area $area): Response
+    public function show(Request $request, Area $area): Response
     {
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+
         $area->load([
             'portfolios' => fn ($query) => $query
+                ->whereIn('workspace_id', $workspaceIds)
                 ->withCount([
                     'projects as total_projects_count',
                     'tasks as total_tasks_count',
@@ -41,12 +47,13 @@ class AreaController extends Controller
                     'tasks as overdue_tasks_count' => fn ($query) => $query->active()->overdue(),
                 ])
                 ->orderBy('position'),
-            'projects' => fn ($query) => $query->with(['portfolio:id,name', 'owner:id,name'])->active()->orderBy('sort_order')->latest(),
+            'projects' => fn ($query) => $query->whereIn('workspace_id', $workspaceIds)->with(['portfolio:id,name', 'owner:id,name'])->active()->orderBy('sort_order')->latest(),
         ]);
 
         $tasks = Task::query()
             ->with(['workspace:id,name', 'project:id,name', 'portfolio:id,name', 'assignee:id,name'])
             ->where('area_id', $area->id)
+            ->whereIn('workspace_id', $workspaceIds)
             ->active()
             ->orderByRaw('due_date is null')
             ->orderBy('due_date')

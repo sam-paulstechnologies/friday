@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Models\Project;
 use App\Models\Task;
+use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -12,6 +13,8 @@ class ProjectBoardController extends Controller
 {
     public function __invoke(Project $project): Response
     {
+        Gate::authorize('view', $project);
+
         $project->load(['workspace:id,name']);
 
         $tasks = Task::query()

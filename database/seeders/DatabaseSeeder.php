@@ -23,11 +23,17 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        if (! app()->environment(['local', 'testing']) && ! (bool) env('TASKFLOW_ALLOW_DEMO_SEEDING', false)) {
+            $this->command?->warn('Demo seed data skipped outside local/testing. Set TASKFLOW_ALLOW_DEMO_SEEDING=true only for non-production demo environments.');
+
+            return;
+        }
+
         $defaultUser = User::firstOrCreate(
             ['email' => 'test@example.com'],
             [
                 'name' => 'Test User',
-                'password' => 'password',
+                'password' => env('TASKFLOW_DEMO_PASSWORD', 'password'),
             ],
         );
 
@@ -131,7 +137,7 @@ class DatabaseSeeder extends Seeder
                 ['email' => $demoUser['email']],
                 [
                     'name' => $demoUser['name'],
-                    'password' => 'password',
+                    'password' => env('TASKFLOW_DEMO_PASSWORD', 'password'),
                 ],
             ),
         ]);

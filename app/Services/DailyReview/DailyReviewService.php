@@ -11,16 +11,24 @@ class DailyReviewService
 {
     public const CLOSED_STATUSES = ['completed', 'done', 'archived'];
 
-    public function collectTodayTasks(User $user): Collection
+    public function collectTodayTasks(User $user, array $options = []): Collection
     {
         $today = now()->toDateString();
         $nextWeek = now()->addDays(7)->toDateString();
+        $portfolio = strtolower((string) ($options['portfolio'] ?? 'all'));
+        $priority = (string) ($options['priority'] ?? 'all');
 
         $tasks = Task::query()
             ->with(['workspace:id,name', 'project:id,name', 'area:id,name', 'portfolio:id,name'])
             ->where(function ($query) use ($user): void {
                 $query->where('assignee_id', $user->id)
                     ->orWhere('reporter_id', $user->id);
+            })
+            ->when($portfolio !== '' && $portfolio !== 'all', function ($query) use ($portfolio): void {
+                $query->whereHas('portfolio', fn ($portfolioQuery) => $portfolioQuery->whereRaw('lower(name) = ?', [$portfolio]));
+            })
+            ->when($priority === 'urgent-high', function ($query): void {
+                $query->whereIn('priority', ['urgent', 'high']);
             })
             ->whereNotIn('status', self::CLOSED_STATUSES)
             ->orderByRaw('due_date is null')
@@ -39,9 +47,9 @@ class DailyReviewService
         ]);
     }
 
-    public function createMorningReview(User $user): DailyReview
+    public function createMorningReview(User $user, array $options = []): DailyReview
     {
-        return $this->createReview($user, 'morning');
+        return $this->createReview($user, 'morning', $options);
     }
 
     public function createEveningReview(User $user): DailyReview
@@ -102,9 +110,9 @@ class DailyReviewService
         return implode("\n", $lines);
     }
 
-    private function createReview(User $user, string $type): DailyReview
+    private function createReview(User $user, string $type, array $options = []): DailyReview
     {
-        $tasks = $this->collectTodayTasks($user);
+        $tasks = $this->collectTodayTasks($user, $options);
         $focus = $this->selectTopFocusItems($tasks);
         $ordered = collect()
             ->merge($focus->map(fn (Task $task) => ['task' => $task, 'type' => 'focus']))
@@ -117,13 +125,26 @@ class DailyReviewService
             ->unique(fn (array $item) => $item['task']->id)
             ->values();
 
-        $review = DailyReview::create([
-            'user_id' => $user->id,
-            'review_date' => now()->toDateString(),
-            'type' => $type,
-            'status' => 'pending',
-            'summary' => "{$ordered->count()} open task(s) selected for {$type} review.",
-        ]);
+        $reviewDate = now()->toDateString();
+        $review = DailyReview::query()
+            ->where('user_id', $user->id)
+            ->whereDate('review_date', $reviewDate)
+            ->where('type', $type)
+            ->first();
+
+        if (! $review) {
+            $review = DailyReview::create([
+                'user_id' => $user->id,
+                'review_date' => $reviewDate,
+                'type' => $type,
+                'status' => 'pending',
+                'summary' => "{$ordered->count()} open task(s) selected for {$type} review.",
+            ]);
+        }
+
+        if (! $review->wasRecentlyCreated) {
+            return $review->load(['items.task.project', 'items.task.area', 'items.task.portfolio']);
+        }
 
         $ordered->each(function (array $item, int $index) use ($review): void {
             /** @var Task $task */

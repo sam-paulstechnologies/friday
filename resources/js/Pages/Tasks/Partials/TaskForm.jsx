@@ -29,9 +29,11 @@ export default function TaskForm({
     portfolios = [],
     projects,
     users,
+    labels = [],
     statuses,
     priorities,
     taskTypes = [],
+    recurrenceTypes = [],
     submitLabel,
 }) {
     const initialWorkspaceId = task?.workspace_id ?? prefilledProject?.workspace_id ?? workspaces[0]?.id ?? '';
@@ -54,6 +56,11 @@ export default function TaskForm({
         assignee_id: task?.assignee_id ?? '',
         start_date: task?.start_date ?? '',
         due_date: task?.due_date ?? '',
+        recurrence_type: task?.recurrence_type ?? 'none',
+        recurrence_interval: task?.recurrence_interval ?? 1,
+        recurrence_ends_at: task?.recurrence_ends_at ?? '',
+        label_ids: task?.labels?.map((label) => label.id) ?? [],
+        new_labels: '',
         position: task?.position ?? 0,
     });
 
@@ -63,6 +70,16 @@ export default function TaskForm({
     const areaPortfolios = portfolios.filter(
         (portfolio) => !data.area_id || String(portfolio.area_id) === String(data.area_id),
     );
+    const workspaceLabels = labels.filter(
+        (label) => String(label.workspace_id) === String(data.workspace_id),
+    );
+    const toggleLabel = (labelId) => {
+        const selected = data.label_ids.map((id) => Number(id));
+
+        setData('label_ids', selected.includes(labelId)
+            ? selected.filter((id) => id !== labelId)
+            : [...selected, labelId]);
+    };
 
     const submit = (event) => {
         event.preventDefault();
@@ -95,11 +112,12 @@ export default function TaskForm({
                     <select
                         id="workspace_id"
                         value={data.workspace_id}
-                        onChange={(event) => {
+                onChange={(event) => {
                             setData({
                                 ...data,
                                 workspace_id: event.target.value,
                                 project_id: '',
+                                label_ids: [],
                             });
                         }}
                         className={`${inputClass} mt-1 block w-full`}
@@ -274,6 +292,83 @@ export default function TaskForm({
                         className="mt-1 block w-full"
                     />
                     <InputError message={errors.due_date} className="mt-2" />
+                </div>
+            </div>
+
+            <div className="grid gap-5 lg:grid-cols-2">
+                <div>
+                    <InputLabel value="Labels" />
+                    <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        {workspaceLabels.length === 0 ? (
+                            <p className="text-sm text-slate-500">No labels in this workspace yet.</p>
+                        ) : (
+                            <div className="flex flex-wrap gap-2">
+                                {workspaceLabels.map((label) => (
+                                    <label key={label.id} className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700">
+                                        <input
+                                            type="checkbox"
+                                            checked={data.label_ids.map((id) => Number(id)).includes(label.id)}
+                                            onChange={() => toggleLabel(label.id)}
+                                            className="rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                                        />
+                                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: label.color ?? '#475569' }} />
+                                        {label.name}
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                        <TextInput
+                            id="new_labels"
+                            value={data.new_labels}
+                            onChange={(event) => setData('new_labels', event.target.value)}
+                            className="mt-3 block w-full"
+                            placeholder="Add new labels, separated by commas"
+                        />
+                    </div>
+                    <InputError message={errors.label_ids || errors.new_labels} className="mt-2" />
+                </div>
+
+                <div className="grid gap-5 sm:grid-cols-3">
+                    <div>
+                        <InputLabel htmlFor="recurrence_type" value="Recurrence" />
+                        <select
+                            id="recurrence_type"
+                            value={data.recurrence_type}
+                            onChange={(event) => setData('recurrence_type', event.target.value)}
+                            className={`${inputClass} mt-1 block w-full`}
+                        >
+                            {(recurrenceTypes.length ? recurrenceTypes : ['none', 'daily', 'weekly', 'monthly']).map((type) => (
+                                <option key={type} value={type}>{type}</option>
+                            ))}
+                        </select>
+                        <InputError message={errors.recurrence_type} className="mt-2" />
+                    </div>
+
+                    <div>
+                        <InputLabel htmlFor="recurrence_interval" value="Every" />
+                        <TextInput
+                            id="recurrence_interval"
+                            type="number"
+                            min="1"
+                            max="12"
+                            value={data.recurrence_interval}
+                            onChange={(event) => setData('recurrence_interval', event.target.value)}
+                            className="mt-1 block w-full"
+                        />
+                        <InputError message={errors.recurrence_interval} className="mt-2" />
+                    </div>
+
+                    <div>
+                        <InputLabel htmlFor="recurrence_ends_at" value="Ends" />
+                        <TextInput
+                            id="recurrence_ends_at"
+                            type="date"
+                            value={data.recurrence_ends_at}
+                            onChange={(event) => setData('recurrence_ends_at', event.target.value)}
+                            className="mt-1 block w-full"
+                        />
+                        <InputError message={errors.recurrence_ends_at} className="mt-2" />
+                    </div>
                 </div>
             </div>
 

@@ -76,4 +76,43 @@ class User extends Authenticatable
     {
         return $this->hasMany(Task::class, 'reporter_id');
     }
+
+    public function accessibleWorkspaceIds(): array
+    {
+        $memberIds = $this->workspaces()
+            ->pluck('workspaces.id');
+
+        $ownedIds = Workspace::query()
+            ->where('created_by', $this->id)
+            ->pluck('id');
+
+        return $memberIds
+            ->merge($ownedIds)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    public function canAccessWorkspace(?int $workspaceId): bool
+    {
+        if (! $workspaceId) {
+            return false;
+        }
+
+        return in_array($workspaceId, $this->accessibleWorkspaceIds(), true);
+    }
+
+    public function workspaceUsersQuery()
+    {
+        $workspaceIds = $this->accessibleWorkspaceIds();
+
+        return User::query()
+            ->select(['id', 'name', 'email'])
+            ->when(
+                $workspaceIds !== [],
+                fn ($query) => $query->whereHas('workspaces', fn ($workspaceQuery) => $workspaceQuery->whereIn('workspaces.id', $workspaceIds)),
+                fn ($query) => $query->whereKey($this->id),
+            )
+            ->orWhere('id', $this->id);
+    }
 }

@@ -291,6 +291,95 @@ function AttachmentsSection({ task }) {
     );
 }
 
+function Labels({ labels }) {
+    if (!labels?.length) {
+        return null;
+    }
+
+    return labels.map((label) => (
+        <Badge key={label.id}>
+            <span className="mr-1.5 inline-block h-2 w-2 rounded-full" style={{ backgroundColor: label.color ?? '#475569' }} />
+            {label.name}
+        </Badge>
+    ));
+}
+
+function SubtasksSection({ task }) {
+    const progress = task.subtask_progress ?? { completed: 0, total: 0 };
+    const { data, setData, post, processing, reset, errors } = useForm({
+        title: '',
+        due_date: '',
+    });
+
+    const submit = (event) => {
+        event.preventDefault();
+
+        post(route('tasks.subtasks.store', task.id), {
+            preserveScroll: true,
+            onSuccess: () => reset(),
+        });
+    };
+
+    const toggle = (subtask) => {
+        router.patch(route('tasks.subtasks.status', [task.id, subtask.id]), {
+            status: subtask.status === 'completed' ? 'todo' : 'completed',
+        }, { preserveScroll: true });
+    };
+
+    return (
+        <Panel>
+            <div className="flex flex-col gap-3 border-b border-slate-200 p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <h3 className="text-base font-semibold text-slate-950">Subtasks</h3>
+                    <p className="mt-1 text-sm text-slate-500">{progress.completed}/{progress.total} completed</p>
+                </div>
+            </div>
+
+            <form onSubmit={submit} className="grid gap-3 border-b border-slate-100 p-5 md:grid-cols-[1fr_170px_auto]">
+                <input
+                    value={data.title}
+                    onChange={(event) => setData('title', event.target.value)}
+                    placeholder="Add a subtask"
+                    className={inputClass}
+                />
+                <input
+                    type="date"
+                    value={data.due_date}
+                    onChange={(event) => setData('due_date', event.target.value)}
+                    className={inputClass}
+                />
+                <button type="submit" disabled={processing || !data.title} className={primaryButton}>Add</button>
+                {errors.title && <div className="text-sm text-rose-600 md:col-span-3">{errors.title}</div>}
+            </form>
+
+            <div className="divide-y divide-slate-100">
+                {task.subtasks.length === 0 ? (
+                    <EmptyState title="No subtasks yet" description="Break this task into smaller steps when needed." />
+                ) : task.subtasks.map((subtask) => (
+                    <div key={subtask.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex min-w-0 items-start gap-3">
+                            <button
+                                type="button"
+                                onClick={() => toggle(subtask)}
+                                className={`mt-1 h-4 w-4 shrink-0 rounded-full border ${subtask.status === 'completed' ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white hover:border-emerald-500'}`}
+                                aria-label={subtask.status === 'completed' ? 'Mark subtask incomplete' : 'Mark subtask complete'}
+                            />
+                            <div className="min-w-0">
+                                <div className={`font-semibold text-slate-950 ${subtask.status === 'completed' ? 'text-slate-500 line-through decoration-slate-300' : ''}`}>{subtask.title}</div>
+                                <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
+                                    <DueDate date={subtask.due_date} status={subtask.status} />
+                                    <Labels labels={subtask.labels} />
+                                </div>
+                            </div>
+                        </div>
+                        <Link href={route('tasks.show', subtask.id)} className={secondaryButton}>Open</Link>
+                    </div>
+                ))}
+            </div>
+        </Panel>
+    );
+}
+
 function CustomFieldsSection({ task, customFields }) {
     const initialValues = Object.fromEntries(customFields.map((field) => [field.id, field.value ?? '']));
     const { data, setData, patch, processing, errors } = useForm({
@@ -370,62 +459,67 @@ function CustomFieldsSection({ task, customFields }) {
 export default function Show({ task, customFields = [] }) {
     const complete = () => router.patch(route('tasks.complete', task.id));
     const archive = () => router.patch(route('tasks.archive', task.id));
+    const restore = () => router.patch(route('tasks.restore', task.id));
+    const completed = task.status === 'completed';
 
     return (
         <AuthenticatedLayout title={task.title} subtitle={task.project?.name ?? task.workspace?.name}>
             <Head title={task.title} />
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-                <main className="space-y-5">
-                    <Panel className="overflow-hidden">
-                        <div className="bg-[radial-gradient(circle_at_top_left,_rgba(139,92,246,0.12),_transparent_30%),linear-gradient(135deg,_#ffffff,_#f8fafc_58%,_#f5f3ff)] p-6 sm:p-8">
-                            <div className="flex flex-wrap gap-2">
-                                <Badge tone={statusTone[task.status]}>{statusLabels[task.status]}</Badge>
-                                <Badge tone={priorityTone[task.priority]}>{priorityLabels[task.priority]}</Badge>
-                                {task.task_type && <Badge>{task.task_type.replace('_', ' ')}</Badge>}
-                                {task.area && <Badge>{task.area.name}</Badge>}
-                                {task.portfolio && <Badge>{task.portfolio.name}</Badge>}
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+                <main className="space-y-4">
+                    <Panel>
+                        <div className="border-b border-slate-200 p-5">
+                            <div className="flex items-start gap-3">
+                                <button type="button" onClick={task.status !== 'completed' ? complete : undefined} className={`mt-1 h-5 w-5 rounded-full border ${completed ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white hover:border-emerald-500'}`} aria-label="Complete task" />
+                                <div className="min-w-0 flex-1">
+                                    <input readOnly value={task.title} className="w-full border-0 bg-transparent p-0 text-2xl font-semibold tracking-tight text-slate-950 focus:ring-0" />
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        <Badge tone={statusTone[task.status]}>{statusLabels[task.status]}</Badge>
+                                        <Badge tone={priorityTone[task.priority]}>{priorityLabels[task.priority]}</Badge>
+                                        {task.task_type && <Badge>{task.task_type.replace('_', ' ')}</Badge>}
+                                        {task.area && <Badge>{task.area.name}</Badge>}
+                                        {task.portfolio && <Badge>{task.portfolio.name}</Badge>}
+                                        <Labels labels={task.labels} />
+                                        {task.recurrence_type !== 'none' && <Badge>{task.recurrence_type} recurrence</Badge>}
+                                    </div>
+                                </div>
                             </div>
-                            <h2 className="mt-4 text-3xl font-bold tracking-tight text-slate-950">{task.title}</h2>
-                            <p className="mt-4 max-w-3xl whitespace-pre-wrap text-sm leading-7 text-slate-600">
+                        </div>
+                        <div className="p-5">
+                            <h3 className="mb-2 text-sm font-semibold text-slate-900">Description</h3>
+                            <p className="max-w-3xl whitespace-pre-wrap text-sm leading-7 text-slate-600">
                                 {task.description || 'No description has been added yet. Use Edit to add the task brief, outcome, and decision context.'}
                             </p>
                         </div>
                     </Panel>
 
-                    <Panel className="p-5">
-                        <div className="flex items-start gap-3">
-                            <span className="mt-1 flex h-8 w-8 items-center justify-center rounded-xl border border-dashed border-slate-300 text-xs font-bold text-slate-400">S</span>
-                            <div>
-                                <h3 className="text-base font-bold text-slate-950">Subtasks</h3>
-                                <p className="mt-1 text-sm leading-6 text-slate-500">
-                                    Nested task support exists in the schema. A full subtask workflow is reserved for a later phase.
-                                </p>
-                            </div>
-                        </div>
-                    </Panel>
+                    <SubtasksSection task={task} />
 
                     <CommentThread task={task} />
                     <AttachmentsSection task={task} />
                     <ActivityTimeline activities={task.activities} />
                 </main>
 
-                <aside className="space-y-4 xl:sticky xl:top-24 xl:self-start">
+                <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
                     <Panel className="p-4">
-                        <div className="flex flex-col gap-2">
-                            <Link href={route('tasks.edit', task.id)} className={secondaryButton}>Edit Task</Link>
+                        <div className="grid gap-2">
+                            <Link href={route('tasks.edit', task.id)} className={secondaryButton}>Edit task</Link>
                             {task.status !== 'completed' && task.status !== 'archived' && (
-                                <button type="button" onClick={complete} className={primaryButton}>Mark Complete</button>
+                                <button type="button" onClick={complete} className={primaryButton}>Mark complete</button>
                             )}
                             {task.status !== 'archived' && (
-                                <button type="button" onClick={archive} className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800">Archive</button>
+                                <button type="button" onClick={archive} className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Archive</button>
+                            )}
+                            {task.status === 'archived' && (
+                                <button type="button" onClick={restore} className={primaryButton}>Restore</button>
                             )}
                         </div>
                     </Panel>
 
                     <Panel className="p-4">
-                        <h3 className="text-sm font-bold text-slate-950">Details</h3>
-                        <div className="mt-4 space-y-3">
+                        <h3 className="text-sm font-semibold text-slate-950">Details</h3>
+                        <div className="mt-3 space-y-2">
                             <MetadataItem label="Status"><Badge tone={statusTone[task.status]}>{statusLabels[task.status]}</Badge></MetadataItem>
                             <MetadataItem label="Priority"><Badge tone={priorityTone[task.priority]}>{priorityLabels[task.priority]}</Badge></MetadataItem>
                             <MetadataItem label="Assignee">
@@ -438,6 +532,7 @@ export default function Show({ task, customFields = [] }) {
                             <MetadataItem label="Task type" value={task.task_type ? task.task_type.replace('_', ' ') : 'Task'} />
                             <MetadataItem label="Start date" value={task.start_date ?? 'Not set'} />
                             <MetadataItem label="Due date"><DueDate date={task.due_date} status={task.status} /></MetadataItem>
+                            <MetadataItem label="Recurrence" value={task.recurrence_type === 'none' ? 'None' : task.recurrence_type} />
                             <MetadataItem label="Section" value={task.section ?? 'No section'} />
                         </div>
                     </Panel>

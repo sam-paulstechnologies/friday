@@ -2,7 +2,7 @@ import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import { Head } from '@inertiajs/react';
 import TaskForm from './Partials/TaskForm';
 
-export default function Create({ prefilledProject, workspaces, projects, users, statuses, priorities }) {
+export default function Create({ prefilledProject, workspaces, projects, users, labels = [], statuses, priorities, recurrenceTypes = [] }) {
     return (
         <AuthenticatedLayout
             title="Create Task"
@@ -16,8 +16,10 @@ export default function Create({ prefilledProject, workspaces, projects, users, 
                     workspaces={workspaces}
                     projects={projects}
                     users={users}
+                    labels={labels}
                     statuses={statuses}
                     priorities={priorities}
+                    recurrenceTypes={recurrenceTypes}
                     submitLabel="Create Task"
                 />
             </div>

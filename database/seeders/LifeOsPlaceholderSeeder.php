@@ -14,6 +14,12 @@ class LifeOsPlaceholderSeeder extends Seeder
 {
     public function run(): void
     {
+        if (! app()->environment(['local', 'testing']) && ! (bool) env('TASKFLOW_ALLOW_DEMO_SEEDING', false)) {
+            $this->command?->warn('Life OS placeholder seed data skipped outside local/testing. Set TASKFLOW_ALLOW_DEMO_SEEDING=true only for non-production demo environments.');
+
+            return;
+        }
+
         $user = User::orderBy('id')->first();
 
         if (! $user) {
@@ -21,7 +27,7 @@ class LifeOsPlaceholderSeeder extends Seeder
                 ['email' => 'test@example.com'],
                 [
                     'name' => 'Test User',
-                    'password' => 'password',
+                    'password' => env('TASKFLOW_DEMO_PASSWORD', 'password'),
                 ],
             );
         }

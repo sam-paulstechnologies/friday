@@ -7,18 +7,23 @@ use App\Models\ProjectTemplate;
 use App\Models\Task;
 use App\Models\Workspace;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class TemplateController extends Controller
 {
-    public function index(): Response
+    public function index(Request $request): Response
     {
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+
         return Inertia::render('Templates/Index', [
-            'workspaces' => Workspace::query()->select(['id', 'name'])->orderBy('name')->get(),
+            'workspaces' => Workspace::query()->select(['id', 'name'])->whereIn('id', $workspaceIds)->orderBy('name')->get(),
             'templates' => ProjectTemplate::query()
                 ->with(['workspace:id,name', 'tasks' => fn ($query) => $query->orderBy('position')])
+                ->whereIn('workspace_id', $workspaceIds)
                 ->latest()
                 ->get()
                 ->map(fn (ProjectTemplate $template) => [
@@ -42,12 +47,16 @@ class TemplateController extends Controller
 
     public function store(Request $request)
     {
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+
         $data = $request->validate([
-            'workspace_id' => ['required', 'integer', 'exists:workspaces,id'],
+            'workspace_id' => ['required', 'integer', Rule::exists('workspaces', 'id')->where(fn ($query) => $query->whereIn('id', $workspaceIds))],
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'task_titles' => ['nullable', 'string', 'max:5000'],
         ]);
+
+        Gate::authorize('create', [ProjectTemplate::class, Workspace::findOrFail($data['workspace_id'])]);
 
         $template = ProjectTemplate::create([
             'workspace_id' => $data['workspace_id'],
@@ -71,6 +80,8 @@ class TemplateController extends Controller
 
     public function createProject(Request $request, ProjectTemplate $template)
     {
+        Gate::authorize('view', $template);
+
         $template->load(['workspace', 'tasks' => fn ($query) => $query->orderBy('position')]);
 
         $project = Project::create([
