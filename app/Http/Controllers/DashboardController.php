@@ -6,6 +6,7 @@ use App\Models\Approval;
 use App\Models\Area;
 use App\Models\Blocker;
 use App\Models\Decision;
+use App\Models\Goal;
 use App\Models\Portfolio;
 use App\Models\Project;
 use App\Models\Risk;
@@ -107,6 +108,26 @@ class DashboardController extends Controller
                     'name' => $nextProjectDeadline->name,
                     'due_date' => $nextProjectDeadline->due_date?->toDateString(),
                 ] : null,
+            ],
+            'leadership' => [
+                'active_goals' => Goal::query()
+                    ->when(
+                        $workspaceIds !== [],
+                        fn ($query) => $query->whereIn('workspace_id', $workspaceIds),
+                        fn ($query) => $query->whereRaw('1 = 0'),
+                    )
+                    ->whereNotIn('status', ['completed', 'archived'])
+                    ->count(),
+                'at_risk_projects' => Project::query()
+                    ->when(
+                        $workspaceIds !== [],
+                        fn ($query) => $query->whereIn('workspace_id', $workspaceIds),
+                        fn ($query) => $query->whereRaw('1 = 0'),
+                    )
+                    ->whereIn('health', ['at_risk', 'off_track'])
+                    ->where('status', '!=', 'archived')
+                    ->count(),
+                'overdue_tasks' => (clone $planningOpenTasks)->overdue()->count(),
             ],
             'spiritualReading' => $spiritualReadingSummaryService->forUser($user),
             'commandCenter' => [

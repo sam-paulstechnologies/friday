@@ -14,6 +14,7 @@ const labels = {
     completed_projects: 'Completed projects',
     active_portfolios: 'Active portfolios',
     active_areas: 'Active areas',
+    active_goals: 'Active goals',
 };
 
 const statusLabels = {
@@ -27,7 +28,7 @@ const statusLabels = {
     on_hold: 'On hold',
 };
 
-export default function Index({ filters, options, summary, portfolioMetrics, projectMetrics, taskHealth, launchReadiness, trends }) {
+export default function Index({ filters, options, summary, portfolioMetrics, projectMetrics, goalMetrics = [], workloadMetrics = [], taskHealth, launchReadiness, trends }) {
     const [values, setValues] = useState(filters);
 
     useEffect(() => {
@@ -131,13 +132,14 @@ export default function Index({ filters, options, summary, portfolioMetrics, pro
                 <PageSection title="Project progress report" description="Project-level completion, overdue pressure, and due dates.">
                     <ResponsiveTable
                         emptyTitle="No project metrics"
-                        columns={['Project', 'Portfolio', 'Status', 'Tasks', 'Open', 'Completed', 'Overdue', 'Progress', 'Due']}
+                        columns={['Project', 'Portfolio', 'Status', 'Health', 'Tasks', 'Open', 'Completed', 'Overdue', 'Progress', 'Due']}
                         rows={projectMetrics.map((project) => ({
                             key: project.id,
                             cells: [
                                 <Link href={route('projects.show', project.id)} className="font-bold text-slate-950 hover:text-slate-700">{project.name}</Link>,
                                 project.portfolio?.name ?? 'No portfolio',
                                 <Badge tone={statusTone[project.status] ?? statusTone.active}>{statusLabels[project.status] ?? titleCase(project.status)}</Badge>,
+                                <Badge tone={statusTone[project.calculated_health] ?? undefined}>{titleCase(project.calculated_health)}</Badge>,
                                 project.total_tasks,
                                 project.open_tasks,
                                 project.completed_tasks,
@@ -148,6 +150,44 @@ export default function Index({ filters, options, summary, portfolioMetrics, pro
                         }))}
                     />
                 </PageSection>
+
+                <section className="grid gap-5 xl:grid-cols-[1fr_1fr]">
+                    <PageSection title="Goals" description="Objective progress, linked projects, and key results.">
+                        <ResponsiveTable
+                            emptyTitle="No goals"
+                            columns={['Goal', 'Owner', 'Status', 'Progress', 'Projects', 'KRs', 'Target']}
+                            rows={goalMetrics.map((goal) => ({
+                                key: goal.id,
+                                cells: [
+                                    <Link href={route('goals.show', goal.id)} className="font-bold text-slate-950 hover:text-slate-700">{goal.title}</Link>,
+                                    goal.owner?.name ?? 'No owner',
+                                    <Badge tone={statusTone[goal.status] ?? statusTone.active}>{statusLabels[goal.status] ?? titleCase(goal.status)}</Badge>,
+                                    <ProgressCell value={goal.progress_percentage} />,
+                                    goal.projects_count,
+                                    goal.key_results_count,
+                                    goal.target_date ?? 'No target',
+                                ],
+                            }))}
+                        />
+                    </PageSection>
+
+                    <PageSection title="Workload reporting" description="Open, overdue, due-week, and completed-week counts by user.">
+                        <ResponsiveTable
+                            emptyTitle="No workload"
+                            columns={['User', 'Open', 'Overdue', 'Due week', 'Completed week']}
+                            rows={workloadMetrics.map((row) => ({
+                                key: row.id,
+                                cells: [
+                                    row.name,
+                                    row.open_tasks,
+                                    <span className={row.overdue_tasks > 0 ? 'font-bold text-rose-600' : ''}>{row.overdue_tasks}</span>,
+                                    row.due_this_week,
+                                    row.completed_this_week,
+                                ],
+                            }))}
+                        />
+                    </PageSection>
+                </section>
 
                 <section className="grid gap-5 xl:grid-cols-2">
                     <HealthPanel title="Tasks by status" items={taskHealth.byStatus} />

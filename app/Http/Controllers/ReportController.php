@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Area;
+use App\Models\Goal;
 use App\Models\Portfolio;
 use App\Models\Project;
 use App\Models\Task;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -36,9 +38,11 @@ class ReportController extends Controller
         return Inertia::render('Reports/Index', [
             'filters' => $filters,
             'options' => $this->options($workspaceIds),
-            'summary' => $this->summary($taskQuery, $projectQuery, $portfolioQuery, $filters),
+            'summary' => $this->summary($taskQuery, $projectQuery, $portfolioQuery, $filters, $workspaceIds),
             'portfolioMetrics' => $this->portfolioMetrics($portfolioQuery, $filters),
             'projectMetrics' => $this->projectMetrics($projectQuery, $filters),
+            'goalMetrics' => $this->goalMetrics($workspaceIds),
+            'workloadMetrics' => $this->workloadMetrics($taskQuery, $workspaceIds),
             'taskHealth' => $this->taskHealth($taskQuery),
             'launchReadiness' => $this->launchReadiness($workspaceIds),
             'trends' => $this->trends($taskQuery),
@@ -56,7 +60,7 @@ class ReportController extends Controller
         ];
     }
 
-    private function summary(Builder $taskQuery, Builder $projectQuery, Builder $portfolioQuery, array $filters): array
+    private function summary(Builder $taskQuery, Builder $projectQuery, Builder $portfolioQuery, array $filters, array $workspaceIds): array
     {
         $areaQuery = Area::query()->where('is_active', true);
 
@@ -75,6 +79,14 @@ class ReportController extends Controller
             'completed_projects' => (clone $projectQuery)->where('status', 'completed')->count(),
             'active_portfolios' => (clone $portfolioQuery)->where('status', 'active')->count(),
             'active_areas' => $areaQuery->count(),
+            'active_goals' => Goal::query()
+                ->when(
+                    $workspaceIds !== [],
+                    fn (Builder $query) => $query->whereIn('workspace_id', $workspaceIds),
+                    fn (Builder $query) => $query->whereRaw('1 = 0'),
+                )
+                ->whereNotIn('status', ['completed', 'archived'])
+                ->count(),
         ];
     }
 
@@ -113,6 +125,8 @@ class ReportController extends Controller
                 'id' => $project->id,
                 'name' => $project->name,
                 'status' => $project->status,
+                'health' => $project->health ?: $this->calculatedProjectHealth($project),
+                'calculated_health' => $this->calculatedProjectHealth($project),
                 'due_date' => $project->due_date?->toDateString(),
                 'portfolio' => $project->portfolio?->only(['id', 'name']),
                 'area' => $project->area?->only(['id', 'name']),
@@ -153,6 +167,56 @@ class ReportController extends Controller
                 ->values()
                 ->all(),
         ];
+    }
+
+    private function goalMetrics(array $workspaceIds): array
+    {
+        return Goal::query()
+            ->with(['owner:id,name'])
+            ->withCount(['projects', 'keyResults'])
+            ->when(
+                $workspaceIds !== [],
+                fn (Builder $query) => $query->whereIn('workspace_id', $workspaceIds),
+                fn (Builder $query) => $query->whereRaw('1 = 0'),
+            )
+            ->where('status', '!=', 'archived')
+            ->orderByRaw('target_date is null')
+            ->orderBy('target_date')
+            ->get()
+            ->map(fn (Goal $goal) => [
+                'id' => $goal->id,
+                'title' => $goal->title,
+                'status' => $goal->status,
+                'target_date' => $goal->target_date?->toDateString(),
+                'progress_percentage' => $goal->progress_percentage,
+                'owner' => $goal->owner?->only(['id', 'name']),
+                'projects_count' => $goal->projects_count,
+                'key_results_count' => $goal->key_results_count,
+            ])
+            ->all();
+    }
+
+    private function workloadMetrics(Builder $taskQuery, array $workspaceIds): array
+    {
+        $tasks = (clone $taskQuery)->with('assignee:id,name')->get();
+        $users = User::query()
+            ->select(['id', 'name'])
+            ->whereHas('workspaces', fn (Builder $query) => $query->whereIn('workspaces.id', $workspaceIds))
+            ->orderBy('name')
+            ->get();
+
+        return $users->map(function (User $user) use ($tasks): array {
+            $assigned = $tasks->where('assignee_id', $user->id);
+
+            return [
+                'id' => $user->id,
+                'name' => $user->name,
+                'open_tasks' => $assigned->filter(fn (Task $task) => ! in_array($task->status, ['completed', 'archived'], true))->count(),
+                'overdue_tasks' => $assigned->filter(fn (Task $task) => $task->status !== 'completed' && $task->due_date && $task->due_date->toDateString() < now()->toDateString())->count(),
+                'due_this_week' => $assigned->filter(fn (Task $task) => $task->status !== 'completed' && $task->due_date && $task->due_date->betweenIncluded(now(), now()->addDays(7)))->count(),
+                'completed_this_week' => $assigned->filter(fn (Task $task) => $task->status === 'completed' && ($task->completed_at?->betweenIncluded(now()->startOfWeek(), now()->endOfWeek()) ?? false))->count(),
+            ];
+        })->values()->all();
     }
 
     private function launchReadiness(array $workspaceIds): array
@@ -332,5 +396,22 @@ class ReportController extends Controller
     private function progress(int $completed, int $total): ?int
     {
         return $total > 0 ? (int) round(($completed / $total) * 100) : null;
+    }
+
+    private function calculatedProjectHealth(Project $project): string
+    {
+        if ($project->status === 'completed') {
+            return 'completed';
+        }
+
+        if ((int) $project->overdue_tasks_count > 0) {
+            return 'off_track';
+        }
+
+        if ($project->due_date && $project->due_date->toDateString() <= now()->addDays(7)->toDateString() && (int) $project->open_tasks_count > 0) {
+            return 'at_risk';
+        }
+
+        return $project->status === 'archived' ? 'archived' : 'on_track';
     }
 }

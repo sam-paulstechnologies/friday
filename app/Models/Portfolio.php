@@ -14,6 +14,7 @@ class Portfolio extends Model
     protected $fillable = [
         'area_id',
         'workspace_id',
+        'owner_id',
         'name',
         'slug',
         'description',
@@ -31,6 +32,11 @@ class Portfolio extends Model
     public function workspace(): BelongsTo
     {
         return $this->belongsTo(Workspace::class);
+    }
+
+    public function owner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'owner_id');
     }
 
     public function projects(): HasMany

@@ -1,12 +1,15 @@
-import { EmptyState, PageSection, PortfolioTile, ProgressBar } from '@/Components/Ui';
+import { EmptyState, PageSection, PortfolioTile, ProgressBar, primaryButton } from '@/Components/Ui';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head } from '@inertiajs/react';
+import { Head, Link } from '@inertiajs/react';
 
 export default function Index({ areas }) {
     return (
         <AuthenticatedLayout title="Portfolios" subtitle="Grouped Life OS portfolios for workstreams, ventures, support, and command objects.">
             <Head title="Portfolios" />
             <div className="space-y-5">
+                <div className="flex justify-end">
+                    <Link href={route('portfolios.create')} className={primaryButton}>Create portfolio</Link>
+                </div>
                 {areas.map((area) => (
                     <PageSection key={area.id} title={area.name} description={`${area.portfolios.length} portfolio(s)`}>
                         {area.portfolios.length === 0 ? (

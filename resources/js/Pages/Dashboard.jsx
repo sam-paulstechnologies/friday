@@ -26,6 +26,7 @@ export default function Dashboard({
     completedToday = [],
     completedTasks = [],
     planning,
+    leadership,
     spiritualReading,
     commandCenter,
     areaHealth,
@@ -86,6 +87,24 @@ export default function Dashboard({
                                 {planning?.next_project_deadline ? `${planning.next_project_deadline.name} / ${planning.next_project_deadline.due_date}` : 'No project deadline'}
                             </div>
                         </div>
+                    </div>
+                </AppCard>
+
+                <AppCard>
+                    <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h3 className="text-sm font-semibold text-slate-950">Leadership Visibility</h3>
+                            <p className="text-xs text-slate-500">Goals, project risk, and overdue pressure.</p>
+                        </div>
+                        <div className="flex gap-2">
+                            <Link href={route('reports.index')} className={secondaryButton}>Open Reports</Link>
+                            <Link href={route('goals.index')} className={secondaryButton}>Open Goals</Link>
+                        </div>
+                    </div>
+                    <div className="grid gap-3 p-4 md:grid-cols-3">
+                        <DashboardMetric label="Active goals" value={leadership?.active_goals ?? 0} />
+                        <DashboardMetric label="At-risk projects" value={leadership?.at_risk_projects ?? 0} alert />
+                        <DashboardMetric label="Overdue tasks" value={leadership?.overdue_tasks ?? 0} alert />
                     </div>
                 </AppCard>
 
