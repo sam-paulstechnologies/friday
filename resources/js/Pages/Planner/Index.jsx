@@ -10,6 +10,7 @@ const eventTone = {
     task_due: 'bg-amber-50 text-amber-700 ring-amber-100',
     project_start: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
     project_due: 'bg-violet-50 text-violet-700 ring-violet-100',
+    google_event: 'bg-sky-50 text-sky-700 ring-sky-100',
 };
 
 export default function Index({ filters, options, month, week, calendar, weekPlan, timeline, workload, summary }) {
@@ -313,13 +314,24 @@ function ScheduleButtons({ task }) {
 }
 
 function EventPill({ event }) {
-    return (
-        <Link href={event.url} className={`block rounded-md px-2 py-1 text-xs font-semibold ring-1 transition hover:brightness-95 ${eventTone[event.type] ?? eventTone.task_due} ${event.completed ? 'opacity-60' : ''}`}>
+    const className = `block rounded-md px-2 py-1 text-xs font-semibold ring-1 transition hover:brightness-95 ${eventTone[event.type] ?? eventTone.task_due} ${event.completed ? 'opacity-60' : ''}`;
+    const content = (
+        <>
             <span className="flex items-center justify-between gap-2">
                 <span>{event.label}</span>
                 {event.overdue && <span className="text-rose-600">Late</span>}
             </span>
             <span className={`block truncate font-medium ${event.completed ? 'line-through decoration-slate-300' : ''}`}>{event.title}</span>
+        </>
+    );
+
+    if (!event.url) {
+        return <div className={className}>{content}</div>;
+    }
+
+    return (
+        <Link href={event.url} className={className}>
+            {content}
         </Link>
     );
 }

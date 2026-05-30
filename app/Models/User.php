@@ -77,6 +77,11 @@ class User extends Authenticatable
         return $this->hasMany(Task::class, 'reporter_id');
     }
 
+    public function calendarConnections(): HasMany
+    {
+        return $this->hasMany(CalendarConnection::class);
+    }
+
     public function accessibleWorkspaceIds(): array
     {
         $memberIds = $this->workspaces()

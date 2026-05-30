@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\User;
+use App\Services\Calendar\CalendarSyncService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -15,7 +16,7 @@ use Inertia\Response;
 
 class PlannerController extends Controller
 {
-    public function index(Request $request): Response
+    public function index(Request $request, CalendarSyncService $calendarSyncService): Response
     {
         $workspaceIds = $request->user()->accessibleWorkspaceIds();
         $filters = $this->filters($request);
@@ -51,7 +52,7 @@ class PlannerController extends Controller
                 'label' => $weekStart->format('M j').' - '.$weekEnd->format('M j'),
             ],
             'calendar' => [
-                'events' => $this->calendarEvents($tasks, $projects, $month),
+                'events' => $this->calendarEvents($tasks, $projects, $month, $calendarSyncService->externalEventsForUser($request->user(), $month->startOfMonth(), $month->endOfMonth())),
                 'overdue' => $this->overdueTasks($tasks),
             ],
             'weekPlan' => $this->weekPlan($tasks, $weekStart, $weekEnd),
@@ -122,7 +123,7 @@ class PlannerController extends Controller
             });
     }
 
-    private function calendarEvents(Collection $tasks, Collection $projects, CarbonImmutable $month): array
+    private function calendarEvents(Collection $tasks, Collection $projects, CarbonImmutable $month, array $externalEvents = []): array
     {
         $start = $month->startOfMonth();
         $end = $month->endOfMonth();
@@ -161,6 +162,7 @@ class PlannerController extends Controller
 
         return $taskEvents
             ->merge($projectEvents)
+            ->merge($externalEvents)
             ->sortBy(['date', 'type', 'title'])
             ->values()
             ->all();
