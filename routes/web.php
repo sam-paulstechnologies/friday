@@ -24,6 +24,7 @@ use App\Http\Controllers\RiskController;
 use App\Http\Controllers\Settings\AiSettingsController;
 use App\Http\Controllers\Settings\AutomationSettingsController;
 use App\Http\Controllers\Settings\IntegrationSettingsController;
+use App\Http\Controllers\Settings\SystemHealthController;
 use App\Http\Controllers\Settings\WorkspaceSettingsController;
 use App\Http\Controllers\TaskAttachmentController;
 use App\Http\Controllers\TaskCommentController;
@@ -113,6 +114,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/settings/integrations/google/callback', [IntegrationSettingsController::class, 'callback'])->name('settings.integrations.google.callback');
     Route::patch('/settings/integrations/google/{calendarConnection}/disconnect', [IntegrationSettingsController::class, 'disconnect'])->name('settings.integrations.google.disconnect');
     Route::post('/settings/integrations/google/sync', [IntegrationSettingsController::class, 'sync'])->name('settings.integrations.google.sync');
+    Route::get('/settings/system-health', SystemHealthController::class)->name('settings.system-health.index');
     Route::get('/notifications', [NotificationController::class, 'index'])->name('notifications.index');
     Route::patch('/notifications/{notification}/read', [NotificationController::class, 'read'])->name('notifications.read');
     Route::patch('/notifications/read-all', [NotificationController::class, 'readAll'])->name('notifications.read-all');

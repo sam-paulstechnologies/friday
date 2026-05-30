@@ -38,6 +38,7 @@ const groups = [
             { name: 'Workspace', href: route('settings.workspace.edit'), activeRoutes: ['settings.workspace.*'], icon: 'people' },
             { name: 'Automations', href: route('settings.automations.index'), activeRoutes: ['settings.automations.*'], icon: 'spark' },
             { name: 'Integrations', href: route('settings.integrations.index'), activeRoutes: ['settings.integrations.*'], icon: 'calendar' },
+            { name: 'System Health', href: route('settings.system-health.index'), activeRoutes: ['settings.system-health.*'], icon: 'alert' },
             { name: 'AI Brain', href: route('settings.ai.edit'), activeRoutes: ['settings.ai.*'], icon: 'settings' },
             { name: 'Custom Fields', href: route('admin.custom-fields.index'), activeRoutes: ['admin.custom-fields.*'], icon: 'sliders' },
             { name: 'Templates', href: route('templates.index'), activeRoutes: ['templates.*'], icon: 'layers' },
