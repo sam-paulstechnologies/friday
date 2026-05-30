@@ -45,7 +45,7 @@ export default function Edit({ workspace, members = [], auditLogs = [], roles = 
 
     return (
         <AuthenticatedLayout title="Workspace Settings" subtitle="Manage workspace access, roles, and recent administrative activity.">
-            <div className="space-y-4">
+            <div data-testid="workspace-settings-page" className="space-y-4">
                 <SectionTabs items={tabs} value={tab} onChange={setTab} />
 
                 {tab === 'general' && (

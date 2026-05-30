@@ -466,7 +466,7 @@ export default function Show({ task, customFields = [] }) {
         <AuthenticatedLayout title={task.title} subtitle={task.project?.name ?? task.workspace?.name}>
             <Head title={task.title} />
 
-            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div data-testid="task-show-page" className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
                 <main className="space-y-4">
                     <Panel>
                         <div className="border-b border-slate-200 p-5">
@@ -506,7 +506,7 @@ export default function Show({ task, customFields = [] }) {
                         <div className="grid gap-2">
                             <Link href={route('tasks.edit', task.id)} className={secondaryButton}>Edit task</Link>
                             {task.status !== 'completed' && task.status !== 'archived' && (
-                                <button type="button" onClick={complete} className={primaryButton}>Mark complete</button>
+                                <button type="button" data-testid="task-complete-button" onClick={complete} className={primaryButton}>Mark complete</button>
                             )}
                             {task.status !== 'archived' && (
                                 <button type="button" onClick={archive} className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">Archive</button>

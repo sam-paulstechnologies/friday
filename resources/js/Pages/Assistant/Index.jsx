@@ -45,7 +45,7 @@ export default function Index({ assistant }) {
     return (
         <AuthenticatedLayout title="Assistant" subtitle="Ask Miriam about today, projects, workload, and safe task creation.">
             <Head title="Assistant" />
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <div data-testid="assistant-page" className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
                 <PageSection title="Chat" description="The assistant uses accessible workspace data only.">
                     <div className="space-y-3 p-4">
                         {!assistant.enabled && (

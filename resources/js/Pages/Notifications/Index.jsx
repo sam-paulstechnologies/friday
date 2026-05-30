@@ -10,7 +10,7 @@ export default function Index({ unreadNotifications = [], readNotifications = []
         <AuthenticatedLayout title="Notifications" subtitle="Friday updates that need attention.">
             <Head title="Notifications" />
 
-            <div className="space-y-5">
+            <div data-testid="inbox-page" className="space-y-5">
                 <Panel className="overflow-hidden">
                     <div className="flex flex-col gap-3 p-5 md:flex-row md:items-center md:justify-between">
                         <div>

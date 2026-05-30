@@ -28,7 +28,7 @@ export default function Index({ tasks, taskGroups = null, taskCounts = null, def
         <AuthenticatedLayout title="Tasks" subtitle="A compact command list for assigned and reported work.">
             <Head title="My Tasks" />
 
-            <div className="space-y-4">
+            <div data-testid="tasks-page" className="space-y-4">
                 <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex flex-wrap gap-1">
                         {[

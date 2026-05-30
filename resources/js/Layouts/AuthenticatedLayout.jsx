@@ -137,7 +137,7 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
                     </div>
                 </div>
 
-                <nav className="premium-scrollbar flex-1 overflow-y-auto px-3 py-3">
+                <nav data-testid="sidebar-nav" className="premium-scrollbar flex-1 overflow-y-auto px-3 py-3">
                     {groups.map((group) => {
                         const collapsible = group.label === 'More';
                         const open = !collapsible || moreOpen || group.items.some((item) => isActive(item.activeRoutes));
@@ -183,7 +183,7 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
             <div className="lg:pl-72">
                 <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 text-slate-950 backdrop-blur">
                     <div className="flex h-14 items-center gap-3 px-3 sm:px-4">
-                        <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-950 lg:hidden" onClick={() => setSidebarOpen(true)}>
+                        <button type="button" data-testid="mobile-nav-toggle" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-950 lg:hidden" onClick={() => setSidebarOpen(true)}>
                             <span className="sr-only">Open navigation</span>
                             <span className="h-4 w-5 border-y-2 border-current" />
                         </button>
@@ -200,7 +200,7 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
                         </form>
 
                         {actions}
-                        <Link href={route('tasks.create')} className={`${primaryButton} hidden sm:inline-flex`}>+ Create</Link>
+                        <Link href={route('tasks.create')} data-testid="task-create-button" className={`${primaryButton} hidden sm:inline-flex`}>+ Create</Link>
                         <Link href={route('notifications.index')} className="relative inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-950">
                             <span className="h-4 w-4 rounded-sm border border-current" />
                             {unreadCount > 0 && <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-rose-500 px-1 text-center text-[10px] font-bold text-white">{unreadCount}</span>}
@@ -221,7 +221,7 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
                     </div>
                 </header>
 
-                <main className="mx-auto max-w-[1480px] px-4 py-5 sm:px-6 lg:px-8">
+                <main data-testid="app-main" className="mx-auto max-w-[1480px] px-4 py-5 sm:px-6 lg:px-8">
                     <div className="mb-5">
                         <h1 className="text-2xl font-semibold tracking-tight text-slate-950">{title}</h1>
                         {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}

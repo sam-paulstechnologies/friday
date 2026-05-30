@@ -45,7 +45,7 @@ export default function Dashboard({
         <AuthenticatedLayout title="Dashboard" subtitle="Your calm command view for focus, progress, and attention needed.">
             <Head title="Dashboard" />
 
-            <div className="space-y-5">
+            <div data-testid="dashboard-page" className="space-y-5">
                 <AppCard className="overflow-hidden">
                     <div className="border-b border-slate-100 bg-white p-5">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">

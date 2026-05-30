@@ -31,7 +31,7 @@ export default function Index({ filters, options, month, week, calendar, weekPla
         <AuthenticatedLayout title="Planner" subtitle="Calendar, week plan, timeline, and workload in one calm planning surface.">
             <Head title="Planner" />
 
-            <div className="space-y-5">
+            <div data-testid="planner-page" className="space-y-5">
                 <Panel className="p-4">
                     <div className="grid gap-4 xl:grid-cols-[1fr_auto] xl:items-center">
                         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

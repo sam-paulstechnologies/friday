@@ -43,7 +43,7 @@ export default function Index({ filters, options, summary, portfolioMetrics, pro
         <AuthenticatedLayout title="Reports" subtitle="Operational metrics for portfolios, projects, tasks, and launch readiness.">
             <Head title="Reports" />
 
-            <div className="space-y-5">
+            <div data-testid="reports-page" className="space-y-5">
                 <div className="overflow-hidden rounded-lg border border-slate-200 bg-white p-4">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                         <div>

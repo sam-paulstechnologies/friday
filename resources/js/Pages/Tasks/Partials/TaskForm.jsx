@@ -99,6 +99,7 @@ export default function TaskForm({
                     <InputLabel htmlFor="title" value="Task title" />
                     <TextInput
                         id="title"
+                        data-testid="task-title-input"
                         value={data.title}
                         onChange={(event) => setData('title', event.target.value)}
                         className="mt-1 block w-full"
@@ -379,7 +380,7 @@ export default function TaskForm({
                 >
                     Cancel
                 </Link>
-                <PrimaryButton disabled={processing}>{submitLabel}</PrimaryButton>
+                <PrimaryButton data-testid="task-submit-button" disabled={processing}>{submitLabel}</PrimaryButton>
             </div>
         </form>
     );

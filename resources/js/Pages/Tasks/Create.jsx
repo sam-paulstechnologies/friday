@@ -10,7 +10,7 @@ export default function Create({ prefilledProject, workspaces, projects, users, 
         >
             <Head title="Create Task" />
 
-            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/70 sm:p-6">
+            <div data-testid="task-create-page" className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/70 sm:p-6">
                 <TaskForm
                     prefilledProject={prefilledProject}
                     workspaces={workspaces}

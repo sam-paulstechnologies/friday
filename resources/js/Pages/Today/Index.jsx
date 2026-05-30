@@ -172,7 +172,7 @@ export default function Index({ groups, focus, summary, dailyReview, reading }) 
         <AuthenticatedLayout title="My Day" subtitle="Today, missed work, reading, and completion review.">
             <Head title="My Day" />
 
-            <div className="space-y-6">
+            <div data-testid="today-page" className="space-y-6">
                 <Panel className="overflow-hidden">
                     <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-center">
                         <div>
