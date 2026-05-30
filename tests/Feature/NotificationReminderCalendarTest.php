@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Project;
 use App\Models\Task;
 use App\Models\TaskAttachment;
+use App\Models\TaskComment;
 use App\Models\TaskReminder;
 use App\Models\Team;
 use App\Models\User;
@@ -36,6 +37,7 @@ class NotificationReminderCalendarTest extends TestCase
 
         $this->assertSame(1, $assignee->notifications()->count());
         $this->assertSame('Task assigned', $assignee->notifications()->first()->data['title']);
+        $this->assertSame('task_assigned', $assignee->notifications()->first()->data['event_type']);
     }
 
     public function test_email_notification_is_triggered_when_task_is_assigned(): void
@@ -67,21 +69,35 @@ class NotificationReminderCalendarTest extends TestCase
         ]);
 
         $this->assertSame('Comment added', $assignee->notifications()->first()->data['title']);
+        $this->assertSame('task_comment', $assignee->notifications()->first()->data['event_type']);
     }
 
-    public function test_email_notification_is_triggered_when_comment_is_added(): void
+    public function test_comment_notification_goes_to_relevant_participant_not_author(): void
     {
-        Notification::fake();
         [$reporter, $workspace, $project, $assignee] = $this->context();
         $task = $this->task($reporter, $workspace, $project, $assignee);
 
-        $this->actingAs($reporter)->post(route('tasks.comments.store', $task), [
-            'body' => 'Please review this task.',
+        $this->actingAs($assignee)->post(route('tasks.comments.store', $task), [
+            'body' => 'Reporter should see this.',
         ]);
 
-        Notification::assertSentTo($assignee, TaskFlowNotification::class, function ($notification, array $channels) {
-            return in_array('mail', $channels, true);
-        });
+        $this->assertSame(1, $reporter->notifications()->count());
+        $this->assertSame(0, $assignee->notifications()->count());
+        $this->assertSame('Comment added', $reporter->notifications()->first()->data['title']);
+    }
+
+    public function test_comment_mentions_notify_matching_workspace_users(): void
+    {
+        [$reporter, $workspace, $project, $assignee] = $this->context();
+        $mentioned = User::factory()->create(['name' => 'Jordan Mention', 'email' => 'jordan@example.com']);
+        $workspace->users()->attach($mentioned->id, ['role' => 'member', 'joined_at' => now()]);
+        $task = $this->task($reporter, $workspace, $project, $assignee);
+
+        $this->actingAs($reporter)->post(route('tasks.comments.store', $task), [
+            'body' => 'Can @jordan@example.com review this too?',
+        ]);
+
+        $this->assertSame('Comment added', $mentioned->notifications()->first()->data['title']);
     }
 
     public function test_notification_is_created_when_attachment_is_uploaded(): void
@@ -106,6 +122,22 @@ class NotificationReminderCalendarTest extends TestCase
         $response->assertOk();
     }
 
+    public function test_user_sees_only_their_own_notifications_in_inbox(): void
+    {
+        [$reporter, , , $assignee] = $this->context();
+        $reporter->notify(new TaskFlowNotification('Reporter item', 'Message', eventType: 'task_comment'));
+        $assignee->notify(new TaskFlowNotification('Assignee item', 'Message', eventType: 'task_assigned'));
+
+        $this->actingAs($reporter)
+            ->get(route('notifications.index'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('unreadNotifications.0.title', 'Reporter item')
+                ->where('unreadNotifications.0.type', 'task_comment')
+                ->missing('unreadNotifications.1')
+            );
+    }
+
     public function test_notification_can_be_marked_as_read(): void
     {
         [$reporter] = $this->context();
@@ -126,6 +158,64 @@ class NotificationReminderCalendarTest extends TestCase
         $this->actingAs($reporter)->patch(route('notifications.read-all'));
 
         $this->assertSame(0, $reporter->unreadNotifications()->count());
+    }
+
+    public function test_reassigning_to_same_user_does_not_duplicate_assignment_notification(): void
+    {
+        [$reporter, $workspace, $project, $assignee] = $this->context();
+        $task = $this->task($reporter, $workspace, $project, $assignee);
+
+        $this->actingAs($reporter)->patch(route('tasks.update', $task), [
+            'workspace_id' => $workspace->id,
+            'project_id' => $project->id,
+            'title' => $task->title,
+            'status' => 'todo',
+            'priority' => 'medium',
+            'assignee_id' => $assignee->id,
+        ]);
+
+        $this->assertSame(0, $assignee->notifications()->count());
+    }
+
+    public function test_task_completion_notifies_creator_not_actor(): void
+    {
+        [$reporter, $workspace, $project, $assignee] = $this->context();
+        $task = $this->task($reporter, $workspace, $project, $assignee);
+
+        $this->actingAs($assignee)->patch(route('tasks.complete', $task));
+
+        $this->assertSame('Task completed', $reporter->notifications()->first()->data['title']);
+        $this->assertSame('task_completed', $reporter->notifications()->first()->data['event_type']);
+        $this->assertSame(0, $assignee->notifications()->count());
+    }
+
+    public function test_unauthorized_user_cannot_comment_on_inaccessible_task(): void
+    {
+        [$reporter, $workspace, $project, $assignee] = $this->context();
+        $intruder = User::factory()->create();
+        $task = $this->task($reporter, $workspace, $project, $assignee);
+
+        $this->actingAs($intruder)
+            ->post(route('tasks.comments.store', $task), ['body' => 'No access'])
+            ->assertForbidden();
+
+        $this->assertSame(0, TaskComment::count());
+    }
+
+    public function test_comment_activity_is_recorded_on_task(): void
+    {
+        [$reporter, $workspace, $project, $assignee] = $this->context();
+        $task = $this->task($reporter, $workspace, $project, $assignee);
+
+        $this->actingAs($reporter)->post(route('tasks.comments.store', $task), [
+            'body' => 'Activity should record this.',
+        ]);
+
+        $this->assertDatabaseHas('task_activities', [
+            'task_id' => $task->id,
+            'user_id' => $reporter->id,
+            'action' => 'comment_added',
+        ]);
     }
 
     public function test_due_tomorrow_reminder_creates_notification(): void

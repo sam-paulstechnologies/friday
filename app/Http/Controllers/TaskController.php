@@ -13,6 +13,7 @@ use App\Models\Task;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Notifications\TaskFlowNotification;
+use App\Services\Collaboration\TaskCollaborationService;
 use App\Services\Tasks\RecurringTaskService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -148,7 +149,7 @@ class TaskController extends Controller
         $task = Task::create($data);
         $this->syncLabels($task, $request);
         $this->logActivity($task, $request->user()->id, 'task_created', 'Task was created.');
-        $this->notifyAssignee($task, 'Task assigned', "You were assigned to {$task->title}.", true);
+        app(TaskCollaborationService::class)->notifyAssignment($task->loadMissing('assignee'), $request->user()->id, true);
 
         return redirect()
             ->route('tasks.show', $task)
@@ -234,7 +235,7 @@ class TaskController extends Controller
         $this->createNextRecurringTaskIfNeeded($task, $original['status'] ?? null, $request->user()->id);
 
         if (($original['assignee_id'] ?? null) !== $task->assignee_id) {
-            $this->notifyAssignee($task, 'Task assigned', "You were assigned to {$task->title}.", true);
+            app(TaskCollaborationService::class)->notifyAssignment($task->loadMissing('assignee'), $request->user()->id, true);
         }
 
         if (($original['status'] ?? null) !== $task->status) {
@@ -257,6 +258,9 @@ class TaskController extends Controller
             'completed_at' => now(),
         ]);
         $this->logActivity($task, request()->user()->id, 'task_completed', 'Task was marked complete.');
+        if ($oldStatus !== 'completed') {
+            app(TaskCollaborationService::class)->notifyCompletion($task->loadMissing(['reporter', 'project.owner', 'project.members']), request()->user());
+        }
         $this->createNextRecurringTaskIfNeeded($task, $oldStatus ?? null, request()->user()->id);
 
         return redirect()
@@ -286,6 +290,9 @@ class TaskController extends Controller
             $data['status'],
         );
         $this->notifyAssignee($task, 'Task status changed', "{$task->title} moved from {$oldStatus} to {$data['status']}.");
+        if ($oldStatus !== 'completed' && $task->status === 'completed') {
+            app(TaskCollaborationService::class)->notifyCompletion($task->loadMissing(['reporter', 'project.owner', 'project.members']), $request->user());
+        }
         $this->createNextRecurringTaskIfNeeded($task, $oldStatus, $request->user()->id);
 
         return back()->with('success', 'Task status updated.');
@@ -612,6 +619,7 @@ class TaskController extends Controller
             projectId: $task->project_id,
             actionUrl: route('tasks.show', $task, false),
             sendMail: $sendMail,
+            eventType: 'task_status',
         ));
     }
 }

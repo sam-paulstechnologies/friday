@@ -75,6 +75,7 @@ function ProjectActivity({ activities }) {
                 ) : activities.map((activity) => (
                     <div key={activity.id} className="p-4">
                         <div className="text-sm font-semibold text-slate-950">{activity.action.replaceAll('_', ' ')}</div>
+                        {activity.task_title && <p className="mt-1 text-xs font-medium text-slate-500">{activity.task_title}</p>}
                         {activity.description && <p className="mt-1 text-sm text-slate-600">{activity.description}</p>}
                         <div className="mt-1 text-xs text-slate-500">{activity.user?.name ?? 'System'} / {activity.created_at}</div>
                     </div>
@@ -84,7 +85,7 @@ function ProjectActivity({ activities }) {
     );
 }
 
-export default function Show({ project, tasks, availableMembers = [] }) {
+export default function Show({ project, tasks, availableMembers = [], collaborationActivity = [] }) {
     const archive = () => router.patch(route('projects.archive', project.id));
     const restore = () => router.patch(route('projects.restore', project.id));
     const completedTasks = tasks.filter((task) => task.status === 'completed').length;
@@ -207,7 +208,7 @@ export default function Show({ project, tasks, availableMembers = [] }) {
                 </Panel>
 
                 <section className="grid gap-4 lg:grid-cols-2">
-                    <ProjectActivity activities={project.activities} />
+                    <ProjectActivity activities={collaborationActivity.length ? collaborationActivity : project.activities} />
                     <ProjectMembers project={project} availableMembers={availableMembers} />
                     <Panel className="p-4">
                         <h3 className="text-sm font-semibold text-slate-950">Planning notes</h3>

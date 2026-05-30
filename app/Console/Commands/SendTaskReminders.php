@@ -62,6 +62,7 @@ class SendTaskReminders extends Command
                     projectId: $task->project_id,
                     actionUrl: route('tasks.show', $task, false),
                     sendMail: true,
+                    eventType: 'task_reminder',
                 ));
             });
 

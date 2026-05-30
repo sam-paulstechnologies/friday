@@ -54,6 +54,7 @@ class TaskAttachmentController extends Controller
             taskId: $task->id,
             projectId: $task->project_id,
             actionUrl: route('tasks.show', $task, false),
+            eventType: 'task_attachment',
         ));
 
         return back()->with('success', 'Attachment uploaded.');

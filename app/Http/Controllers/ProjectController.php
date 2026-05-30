@@ -6,7 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\Area;
 use App\Models\Portfolio;
 use App\Models\Project;
+use App\Models\ProjectActivity;
 use App\Models\Task;
+use App\Models\TaskActivity;
+use App\Models\TaskComment;
 use App\Models\Team;
 use App\Models\User;
 use App\Models\Workspace;
@@ -120,6 +123,7 @@ class ProjectController extends Controller
         return Inertia::render('Projects/Show', [
             'project' => $this->projectResource($project),
             'tasks' => $project->tasks->map(fn (Task $task) => $this->taskResource($task)),
+            'collaborationActivity' => $this->collaborationActivity($project),
             'availableMembers' => $availableMembers,
         ]);
     }
@@ -355,5 +359,72 @@ class ProjectController extends Controller
             'old_value' => $oldValue,
             'new_value' => $newValue,
         ]);
+    }
+
+    private function collaborationActivity(Project $project)
+    {
+        $taskIds = $project->tasks()->pluck('id');
+
+        $projectActivities = ProjectActivity::query()
+            ->with('user:id,name')
+            ->where('project_id', $project->id)
+            ->latest()
+            ->limit(10)
+            ->get()
+            ->map(fn (ProjectActivity $activity) => [
+                'id' => 'project-'.$activity->id,
+                'kind' => 'project_activity',
+                'action' => $activity->action,
+                'description' => $activity->description,
+                'task_id' => null,
+                'task_title' => null,
+                'created_at' => $activity->created_at?->toDateTimeString(),
+                'user' => $activity->user?->only(['id', 'name']),
+            ])
+            ->toBase();
+
+        $taskActivities = TaskActivity::query()
+            ->with(['user:id,name', 'task:id,title,project_id'])
+            ->whereIn('task_id', $taskIds)
+            ->whereIn('action', ['task_created', 'task_completed', 'comment_added', 'attachment_uploaded'])
+            ->latest()
+            ->limit(20)
+            ->get()
+            ->map(fn (TaskActivity $activity) => [
+                'id' => 'task-'.$activity->id,
+                'kind' => 'task_activity',
+                'action' => $activity->action,
+                'description' => $activity->description,
+                'task_id' => $activity->task_id,
+                'task_title' => $activity->task?->title,
+                'created_at' => $activity->created_at?->toDateTimeString(),
+                'user' => $activity->user?->only(['id', 'name']),
+            ])
+            ->toBase();
+
+        $comments = TaskComment::query()
+            ->with(['user:id,name', 'task:id,title,project_id'])
+            ->whereHas('task', fn ($query) => $query->where('project_id', $project->id))
+            ->latest()
+            ->limit(10)
+            ->get()
+            ->map(fn (TaskComment $comment) => [
+                'id' => 'comment-'.$comment->id,
+                'kind' => 'comment',
+                'action' => 'comment_added',
+                'description' => (string) str($comment->body)->limit(120),
+                'task_id' => $comment->task_id,
+                'task_title' => $comment->task?->title,
+                'created_at' => $comment->created_at?->toDateTimeString(),
+                'user' => $comment->user?->only(['id', 'name']),
+            ])
+            ->toBase();
+
+        return $projectActivities
+            ->merge($taskActivities)
+            ->merge($comments)
+            ->sortByDesc('created_at')
+            ->take(20)
+            ->values();
     }
 }

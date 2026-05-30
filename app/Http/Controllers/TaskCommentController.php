@@ -5,13 +5,13 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Controller;
 use App\Models\Task;
 use App\Models\TaskComment;
-use App\Notifications\TaskFlowNotification;
+use App\Services\Collaboration\TaskCollaborationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 
 class TaskCommentController extends Controller
 {
-    public function store(Request $request, Task $task)
+    public function store(Request $request, Task $task, TaskCollaborationService $collaboration)
     {
         Gate::authorize('view', $task);
 
@@ -19,21 +19,19 @@ class TaskCommentController extends Controller
             'body' => ['required', 'string', 'max:5000'],
         ]);
 
-        $task->comments()->create([
+        $comment = $task->comments()->create([
             'user_id' => $request->user()->id,
             'body' => $data['body'],
         ]);
 
-        $task->loadMissing('assignee');
+        $task->activities()->create([
+            'user_id' => $request->user()->id,
+            'action' => 'comment_added',
+            'description' => 'Comment was added.',
+            'new_value' => (string) str($data['body'])->limit(160),
+        ]);
 
-        $task->assignee?->notify(new TaskFlowNotification(
-            title: 'Comment added',
-            message: "{$request->user()->name} commented on {$task->title}.",
-            taskId: $task->id,
-            projectId: $task->project_id,
-            actionUrl: route('tasks.show', $task, false),
-            sendMail: true,
-        ));
+        $collaboration->notifyComment($task, $comment, $request->user());
 
         return back()->with('success', 'Comment added.');
     }

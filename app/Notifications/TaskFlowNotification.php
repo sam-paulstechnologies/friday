@@ -17,6 +17,7 @@ class TaskFlowNotification extends Notification
         private readonly ?int $projectId = null,
         private readonly ?string $actionUrl = null,
         private readonly bool $sendMail = false,
+        private readonly string $eventType = 'general',
     ) {}
 
     public function via(object $notifiable): array
@@ -43,6 +44,7 @@ class TaskFlowNotification extends Notification
         return [
             'title' => $this->title,
             'message' => $this->message,
+            'event_type' => $this->eventType,
             'task_id' => $this->taskId,
             'project_id' => $this->projectId,
             'action_url' => $this->actionUrl,

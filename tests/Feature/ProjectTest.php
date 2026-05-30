@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Project;
+use App\Models\Task;
 use App\Models\Team;
 use App\Models\User;
 use App\Models\Workspace;
@@ -273,6 +274,36 @@ class ProjectTest extends TestCase
         $this->actingAs($member)
             ->get(route('projects.show', $project))
             ->assertOk();
+    }
+
+    public function test_project_show_includes_recent_task_collaboration_activity(): void
+    {
+        [$user, $workspace, $team] = $this->projectContext();
+        $project = $this->project($user, $workspace, $team);
+        $task = Task::create([
+            'workspace_id' => $workspace->id,
+            'project_id' => $project->id,
+            'title' => 'Launch checklist',
+            'status' => 'todo',
+            'priority' => 'medium',
+            'assignee_id' => $user->id,
+            'reporter_id' => $user->id,
+        ]);
+
+        $task->comments()->create([
+            'user_id' => $user->id,
+            'body' => 'Latest collaboration note.',
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('projects.show', $project))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('collaborationActivity.0.kind', 'comment')
+                ->where('collaborationActivity.0.action', 'comment_added')
+                ->where('collaborationActivity.0.task_title', 'Launch checklist')
+                ->where('collaborationActivity.0.description', 'Latest collaboration note.')
+            );
     }
 
     private function projectContext(): array
