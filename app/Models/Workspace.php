@@ -65,4 +65,9 @@ class Workspace extends Model
     {
         return $this->hasMany(AuditLog::class);
     }
+
+    public function automationRules(): HasMany
+    {
+        return $this->hasMany(AutomationRule::class);
+    }
 }

@@ -27,6 +27,7 @@ export default function Dashboard({
     completedTasks = [],
     planning,
     leadership,
+    automation,
     spiritualReading,
     commandCenter,
     areaHealth,
@@ -105,6 +106,9 @@ export default function Dashboard({
                         <DashboardMetric label="Active goals" value={leadership?.active_goals ?? 0} />
                         <DashboardMetric label="At-risk projects" value={leadership?.at_risk_projects ?? 0} alert />
                         <DashboardMetric label="Overdue tasks" value={leadership?.overdue_tasks ?? 0} alert />
+                    </div>
+                    <div className="border-t border-slate-100 px-4 py-3 text-sm text-slate-600">
+                        <Link href={route('settings.automations.index')} className="font-semibold text-rose-600 hover:text-rose-700">{automation?.active_rules ?? 0} automation rules active</Link>
                     </div>
                 </AppCard>
 

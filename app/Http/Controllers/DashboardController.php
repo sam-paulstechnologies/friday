@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Approval;
 use App\Models\Area;
+use App\Models\AutomationRule;
 use App\Models\Blocker;
 use App\Models\Decision;
 use App\Models\Goal;
@@ -128,6 +129,17 @@ class DashboardController extends Controller
                     ->where('status', '!=', 'archived')
                     ->count(),
                 'overdue_tasks' => (clone $planningOpenTasks)->overdue()->count(),
+            ],
+            'automation' => [
+                'active_rules' => AutomationRule::query()
+                    ->when(
+                        $workspaceIds !== [],
+                        fn ($query) => $query->whereIn('workspace_id', $workspaceIds),
+                        fn ($query) => $query->whereRaw('1 = 0'),
+                    )
+                    ->where('is_active', true)
+                    ->whereNull('archived_at')
+                    ->count(),
             ],
             'spiritualReading' => $spiritualReadingSummaryService->forUser($user),
             'commandCenter' => [

@@ -11,3 +11,4 @@ Artisan::command('inspire', function () {
 Schedule::command('taskflow:send-task-reminders')->daily();
 Schedule::command('taskflow:send-daily-briefing')->dailyAt('08:00');
 Schedule::command('taskflow:send-evening-checkin')->dailyAt('20:00');
+Schedule::command('miriam:run-automations')->everyFifteenMinutes();
