@@ -39,6 +39,7 @@ const groups = [
     {
         label: 'Admin / Settings',
         items: [
+            { name: 'Workspace Settings', href: route('settings.workspace.edit'), activeRoutes: ['settings.workspace.*'], icon: 'people' },
             { name: 'AI Brain Settings', href: route('settings.ai.edit'), activeRoutes: ['settings.ai.*'], icon: 'settings' },
             { name: 'Custom Fields', href: route('admin.custom-fields.index'), activeRoutes: ['admin.custom-fields.*'], icon: 'sliders' },
             { name: 'Templates', href: route('templates.index'), activeRoutes: ['templates.*'], icon: 'layers' },

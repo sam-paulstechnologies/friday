@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\Goal;
 use App\Models\GoalKeyResult;
 use App\Models\Project;
@@ -124,6 +125,9 @@ class GoalController extends Controller
 
         $goal->update(['status' => 'archived']);
         $this->logActivity($goal, request()->user()->id, 'goal_archived', 'Goal was archived.');
+        AuditLog::record($goal->workspace_id, request()->user()->id, 'goal_archived', $goal, [
+            'goal_title' => $goal->title,
+        ]);
 
         return redirect()->route('goals.index')->with('success', 'Goal archived.');
     }
@@ -134,6 +138,9 @@ class GoalController extends Controller
 
         $goal->update(['status' => 'on_track']);
         $this->logActivity($goal, request()->user()->id, 'goal_restored', 'Goal was restored.');
+        AuditLog::record($goal->workspace_id, request()->user()->id, 'goal_restored', $goal, [
+            'goal_title' => $goal->title,
+        ]);
 
         return redirect()->route('goals.show', $goal)->with('success', 'Goal restored.');
     }
@@ -165,7 +172,7 @@ class GoalController extends Controller
 
     private function validatedGoalData(Request $request): array
     {
-        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+        $workspaceIds = $this->manageableWorkspaceIds($request->user());
         $workspaceUserIds = $request->user()->workspaceUsersQuery()->pluck('id')->all();
 
         return $request->validate([
@@ -192,7 +199,7 @@ class GoalController extends Controller
 
     private function formOptions(Request $request): array
     {
-        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+        $workspaceIds = $this->manageableWorkspaceIds($request->user());
 
         return [
             'workspaces' => Workspace::query()->select(['id', 'name'])->whereIn('id', $workspaceIds)->orderBy('name')->get(),
@@ -221,6 +228,14 @@ class GoalController extends Controller
             ->all();
 
         $goal->projects()->sync($allowedProjectIds);
+    }
+
+    private function manageableWorkspaceIds(User $user): array
+    {
+        return collect($user->accessibleWorkspaceIds())
+            ->filter(fn (int $workspaceId) => $user->hasWorkspaceRole($workspaceId, ['owner', 'admin']))
+            ->values()
+            ->all();
     }
 
     private function recalculateKeyResult(GoalKeyResult $keyResult): void

@@ -102,6 +102,43 @@ class User extends Authenticatable
         return in_array($workspaceId, $this->accessibleWorkspaceIds(), true);
     }
 
+    public function workspaceRole(?int $workspaceId): ?string
+    {
+        if (! $workspaceId) {
+            return null;
+        }
+
+        $workspace = Workspace::query()
+            ->select(['id', 'created_by'])
+            ->whereKey($workspaceId)
+            ->first();
+
+        if ($workspace?->created_by === $this->id) {
+            return 'owner';
+        }
+
+        $member = $this->workspaces()
+            ->whereKey($workspaceId)
+            ->first();
+
+        return $member?->pivot?->role;
+    }
+
+    public function hasWorkspaceRole(?int $workspaceId, array $roles): bool
+    {
+        return in_array($this->workspaceRole($workspaceId), $roles, true);
+    }
+
+    public function canManageWorkspace(?int $workspaceId): bool
+    {
+        return $this->hasWorkspaceRole($workspaceId, ['owner', 'admin']);
+    }
+
+    public function canWriteWorkspace(?int $workspaceId): bool
+    {
+        return $this->hasWorkspaceRole($workspaceId, ['owner', 'admin', 'member']);
+    }
+
     public function workspaceUsersQuery()
     {
         $workspaceIds = $this->accessibleWorkspaceIds();

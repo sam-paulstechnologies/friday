@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -34,6 +35,11 @@ class ProjectMemberController extends Controller
             'description' => 'Project member added.',
             'new_value' => $member?->name,
         ]);
+        AuditLog::record($project->workspace_id, $request->user()->id, 'project_member_added', $project, [
+            'project_name' => $project->name,
+            'member_id' => $member?->id,
+            'member_email' => $member?->email,
+        ]);
 
         return back()->with('success', 'Project member added.');
     }
@@ -50,6 +56,11 @@ class ProjectMemberController extends Controller
             'action' => 'member_removed',
             'description' => 'Project member removed.',
             'old_value' => $user->name,
+        ]);
+        AuditLog::record($project->workspace_id, $request->user()->id, 'project_member_removed', $project, [
+            'project_name' => $project->name,
+            'member_id' => $user->id,
+            'member_email' => $user->email,
         ]);
 
         return back()->with('success', 'Project member removed.');

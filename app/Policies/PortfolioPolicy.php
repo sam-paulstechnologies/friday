@@ -14,12 +14,14 @@ class PortfolioPolicy
 
     public function create(User $user): bool
     {
-        return $user->accessibleWorkspaceIds() !== [];
+        return collect($user->accessibleWorkspaceIds())
+            ->contains(fn (int $workspaceId) => $user->hasWorkspaceRole($workspaceId, ['owner', 'admin']));
     }
 
     public function update(User $user, Portfolio $portfolio): bool
     {
-        return $this->view($user, $portfolio);
+        return $this->view($user, $portfolio)
+            && $user->hasWorkspaceRole($portfolio->workspace_id, ['owner', 'admin']);
     }
 
     public function delete(User $user, Portfolio $portfolio): bool

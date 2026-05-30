@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\AuditLog;
 use App\Models\Area;
 use App\Models\Portfolio;
 use App\Models\Project;
@@ -65,6 +66,8 @@ class ProjectController extends Controller
 
     public function create(): Response
     {
+        Gate::authorize('create', Project::class);
+
         return Inertia::render('Projects/Create', $this->formOptions());
     }
 
@@ -164,6 +167,9 @@ class ProjectController extends Controller
 
         $project->update(['status' => 'archived']);
         $this->logActivity($project, request()->user()->id, 'project_archived', 'Project was archived.');
+        AuditLog::record($project->workspace_id, request()->user()->id, 'project_archived', $project, [
+            'project_name' => $project->name,
+        ]);
 
         return redirect()
             ->route('projects.index')
@@ -176,6 +182,9 @@ class ProjectController extends Controller
 
         $project->update(['status' => 'active']);
         $this->logActivity($project, request()->user()->id, 'project_restored', 'Project was restored from archive.');
+        AuditLog::record($project->workspace_id, request()->user()->id, 'project_restored', $project, [
+            'project_name' => $project->name,
+        ]);
 
         return redirect()
             ->route('projects.show', $project)
@@ -184,7 +193,7 @@ class ProjectController extends Controller
 
     private function validatedProjectData(Request $request): array
     {
-        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+        $workspaceIds = $this->writableWorkspaceIds($request->user());
 
         return $request->validate([
             'workspace_id' => ['required', 'integer', Rule::exists('workspaces', 'id')->where(fn ($query) => $query->whereIn('id', $workspaceIds))],
@@ -206,7 +215,8 @@ class ProjectController extends Controller
 
     private function formOptions(): array
     {
-        $workspaceIds = request()->user()?->accessibleWorkspaceIds() ?? [];
+        $user = request()->user();
+        $workspaceIds = $user ? $this->writableWorkspaceIds($user) : [];
 
         return [
             'workspaces' => Workspace::query()
@@ -342,6 +352,14 @@ class ProjectController extends Controller
         }
 
         return $slug;
+    }
+
+    private function writableWorkspaceIds(User $user): array
+    {
+        return collect($user->accessibleWorkspaceIds())
+            ->filter(fn (int $workspaceId) => $user->canWriteWorkspace($workspaceId))
+            ->values()
+            ->all();
     }
 
     private function logActivity(

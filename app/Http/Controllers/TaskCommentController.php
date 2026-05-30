@@ -13,7 +13,7 @@ class TaskCommentController extends Controller
 {
     public function store(Request $request, Task $task, TaskCollaborationService $collaboration)
     {
-        Gate::authorize('view', $task);
+        Gate::authorize('update', $task);
 
         $data = $request->validate([
             'body' => ['required', 'string', 'max:5000'],
@@ -38,7 +38,7 @@ class TaskCommentController extends Controller
 
     public function update(Request $request, TaskComment $comment)
     {
-        Gate::authorize('view', $comment->task);
+        Gate::authorize('update', $comment->task);
         abort_unless($comment->user_id === $request->user()->id, 403);
 
         $data = $request->validate([
@@ -52,7 +52,7 @@ class TaskCommentController extends Controller
 
     public function destroy(Request $request, TaskComment $comment)
     {
-        Gate::authorize('view', $comment->task);
+        Gate::authorize('update', $comment->task);
         abort_unless($comment->user_id === $request->user()->id, 403);
 
         $comment->delete();

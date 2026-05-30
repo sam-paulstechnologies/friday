@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\Area;
 use App\Models\Portfolio;
 use App\Models\Project;
@@ -128,6 +129,9 @@ class PortfolioController extends Controller
         Gate::authorize('delete', $portfolio);
 
         $portfolio->update(['status' => 'archived']);
+        AuditLog::record($portfolio->workspace_id, request()->user()->id, 'portfolio_archived', $portfolio, [
+            'portfolio_name' => $portfolio->name,
+        ]);
 
         return redirect()->route('portfolios.index')->with('success', 'Portfolio archived.');
     }
@@ -137,6 +141,9 @@ class PortfolioController extends Controller
         Gate::authorize('update', $portfolio);
 
         $portfolio->update(['status' => 'active']);
+        AuditLog::record($portfolio->workspace_id, request()->user()->id, 'portfolio_restored', $portfolio, [
+            'portfolio_name' => $portfolio->name,
+        ]);
 
         return redirect()->route('portfolios.show', $portfolio)->with('success', 'Portfolio restored.');
     }
@@ -251,7 +258,7 @@ class PortfolioController extends Controller
 
     private function validatedPortfolioData(Request $request): array
     {
-        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+        $workspaceIds = $this->manageableWorkspaceIds($request->user());
         $workspaceUserIds = $request->user()->workspaceUsersQuery()->pluck('id')->all();
 
         return $request->validate([
@@ -269,7 +276,7 @@ class PortfolioController extends Controller
 
     private function formOptions(Request $request): array
     {
-        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+        $workspaceIds = $this->manageableWorkspaceIds($request->user());
 
         return [
             'workspaces' => Workspace::query()->select(['id', 'name'])->whereIn('id', $workspaceIds)->orderBy('name')->get(),
@@ -301,5 +308,13 @@ class PortfolioController extends Controller
         }
 
         return $slug;
+    }
+
+    private function manageableWorkspaceIds(User $user): array
+    {
+        return collect($user->accessibleWorkspaceIds())
+            ->filter(fn (int $workspaceId) => $user->hasWorkspaceRole($workspaceId, ['owner', 'admin']))
+            ->values()
+            ->all();
     }
 }

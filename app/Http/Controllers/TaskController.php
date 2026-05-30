@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Models\AuditLog;
 use App\Models\Area;
 use App\Models\CustomField;
 use App\Models\CustomFieldValue;
@@ -129,6 +130,8 @@ class TaskController extends Controller
 
     public function create(?Project $project = null): Response
     {
+        Gate::authorize('create', Task::class);
+
         return Inertia::render('Tasks/Create', [
             'prefilledProject' => $project?->only(['id', 'workspace_id', 'area_id', 'portfolio_id', 'name']),
             ...$this->formOptions(),
@@ -258,6 +261,9 @@ class TaskController extends Controller
             'completed_at' => now(),
         ]);
         $this->logActivity($task, request()->user()->id, 'task_completed', 'Task was marked complete.');
+        AuditLog::record($task->workspace_id, request()->user()->id, 'task_completed', $task, [
+            'task_title' => $task->title,
+        ]);
         if ($oldStatus !== 'completed') {
             app(TaskCollaborationService::class)->notifyCompletion($task->loadMissing(['reporter', 'project.owner', 'project.members']), request()->user());
         }
@@ -319,6 +325,9 @@ class TaskController extends Controller
             'completed_at' => null,
         ]);
         $this->logActivity($task, request()->user()->id, 'task_restored', 'Task was restored from archive.');
+        AuditLog::record($task->workspace_id, request()->user()->id, 'task_reopened', $task, [
+            'task_title' => $task->title,
+        ]);
 
         return redirect()
             ->route('tasks.show', $task)
@@ -327,7 +336,7 @@ class TaskController extends Controller
 
     private function validatedTaskData(Request $request): array
     {
-        $workspaceIds = $request->user()->accessibleWorkspaceIds();
+        $workspaceIds = $this->writableWorkspaceIds($request->user());
         $userIds = $request->user()->workspaceUsersQuery()->pluck('id')->unique()->values()->all();
 
         return $request->validate([
@@ -361,7 +370,7 @@ class TaskController extends Controller
     private function formOptions(): array
     {
         $user = request()->user();
-        $workspaceIds = $user?->accessibleWorkspaceIds() ?? [];
+        $workspaceIds = $user ? $this->writableWorkspaceIds($user) : [];
 
         return [
             'workspaces' => Workspace::query()->select(['id', 'name'])->whereIn('id', $workspaceIds)->orderBy('name')->get(),
@@ -389,6 +398,14 @@ class TaskController extends Controller
                 fn ($query) => $query->whereIn('workspace_id', $workspaceIds),
                 fn ($query) => $query->whereRaw('1 = 0'),
             );
+    }
+
+    private function writableWorkspaceIds(User $user): array
+    {
+        return collect($user->accessibleWorkspaceIds())
+            ->filter(fn (int $workspaceId) => $user->canWriteWorkspace($workspaceId))
+            ->values()
+            ->all();
     }
 
     private function taskResource(Task $task): array

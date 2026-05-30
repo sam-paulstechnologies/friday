@@ -19,15 +19,26 @@ class WorkspacePolicy
 
     public function update(User $user, Workspace $workspace): bool
     {
-        return $workspace->created_by === $user->id
-            || $workspace->users()
-                ->whereKey($user->id)
-                ->wherePivotIn('role', ['owner', 'admin'])
-                ->exists();
+        return $user->canManageWorkspace($workspace->id);
     }
 
     public function delete(User $user, Workspace $workspace): bool
     {
-        return $this->update($user, $workspace);
+        return $user->hasWorkspaceRole($workspace->id, ['owner']);
+    }
+
+    public function viewSettings(User $user, Workspace $workspace): bool
+    {
+        return $user->canManageWorkspace($workspace->id);
+    }
+
+    public function manageMembers(User $user, Workspace $workspace): bool
+    {
+        return $user->canManageWorkspace($workspace->id);
+    }
+
+    public function manageRoles(User $user, Workspace $workspace): bool
+    {
+        return $user->canManageWorkspace($workspace->id);
     }
 }

@@ -15,16 +15,17 @@ class CustomFieldPolicy
 
     public function create(User $user, Workspace $workspace): bool
     {
-        return $user->canAccessWorkspace($workspace->id);
+        return $user->canManageWorkspace($workspace->id);
     }
 
     public function update(User $user, CustomField $customField): bool
     {
-        return $this->view($user, $customField);
+        return $this->view($user, $customField)
+            && $user->canManageWorkspace($customField->workspace_id);
     }
 
     public function delete(User $user, CustomField $customField): bool
     {
-        return $this->view($user, $customField);
+        return $this->update($user, $customField);
     }
 }

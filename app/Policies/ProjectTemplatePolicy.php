@@ -15,16 +15,17 @@ class ProjectTemplatePolicy
 
     public function create(User $user, Workspace $workspace): bool
     {
-        return $user->canAccessWorkspace($workspace->id);
+        return $user->canManageWorkspace($workspace->id);
     }
 
     public function update(User $user, ProjectTemplate $template): bool
     {
-        return $this->view($user, $template);
+        return $this->view($user, $template)
+            && $user->canManageWorkspace($template->workspace_id);
     }
 
     public function delete(User $user, ProjectTemplate $template): bool
     {
-        return $this->view($user, $template);
+        return $this->update($user, $template);
     }
 }

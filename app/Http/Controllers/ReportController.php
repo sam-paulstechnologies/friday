@@ -18,7 +18,7 @@ class ReportController extends Controller
     public function index(Request $request): Response
     {
         $filters = $this->filters($request);
-        $workspaceIds = $request->user()->workspaces()->pluck('workspaces.id')->all();
+        $workspaceIds = $request->user()->accessibleWorkspaceIds();
 
         $taskQuery = $this->applyTaskFilters(
             $this->workspaceTasks($workspaceIds),
