@@ -13,9 +13,8 @@ const groups = [
             { name: 'My Tasks', href: route('tasks.index'), activeRoutes: ['tasks.*'], icon: 'check' },
             { name: 'Projects', href: route('projects.index'), activeRoutes: ['projects.*'], icon: 'folder' },
             { name: 'Portfolios', href: route('portfolios.index'), activeRoutes: ['portfolios.*', 'areas.*'], icon: 'briefcase' },
-            { name: 'Calendar', href: route('calendar.index'), activeRoutes: ['calendar.*'], icon: 'calendar' },
+            { name: 'Planner', href: route('planner.index'), activeRoutes: ['planner.*', 'calendar.*', 'workload.*'], icon: 'calendar' },
             { name: 'Reports', href: route('reports.index'), activeRoutes: ['reports.*'], icon: 'chart' },
-            { name: 'Workload', href: route('workload.index'), activeRoutes: ['workload.*'], icon: 'people' },
         ],
     },
     {

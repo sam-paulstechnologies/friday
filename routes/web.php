@@ -10,6 +10,7 @@ use App\Http\Controllers\DecisionController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\NoteController;
 use App\Http\Controllers\PortfolioController;
+use App\Http\Controllers\PlannerController;
 use App\Http\Controllers\PrioritizationReviewController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProjectBoardController;
@@ -61,6 +62,8 @@ Route::middleware('auth')->group(function () {
     Route::post('/spiritual/journal', [SpiritualController::class, 'storeJournal'])->name('spiritual.journal.store');
     Route::post('/spiritual/notes', [SpiritualController::class, 'storeNote'])->name('spiritual.notes.store');
     Route::resource('notes', NoteController::class)->except(['edit']);
+    Route::get('/planner', [PlannerController::class, 'index'])->name('planner.index');
+    Route::patch('/planner/tasks/{task}/schedule', [PlannerController::class, 'schedule'])->name('planner.tasks.schedule');
     Route::get('/calendar', [CalendarController::class, 'index'])->name('calendar.index');
     Route::get('/templates', [TemplateController::class, 'index'])->name('templates.index');
     Route::post('/templates', [TemplateController::class, 'store'])->name('templates.store');

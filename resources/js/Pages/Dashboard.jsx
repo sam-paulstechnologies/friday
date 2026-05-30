@@ -25,6 +25,7 @@ export default function Dashboard({
     weeklyFocus,
     completedToday = [],
     completedTasks = [],
+    planning,
     spiritualReading,
     commandCenter,
     areaHealth,
@@ -65,6 +66,26 @@ export default function Dashboard({
                                 <div className={`mt-1 text-xl font-semibold ${['overdue', 'blockers', 'risks'].includes(key) && Number(summary[key] ?? 0) > 0 ? 'text-rose-600' : 'text-slate-950'}`}>{summary[key] ?? 0}</div>
                             </div>
                         ))}
+                    </div>
+                </AppCard>
+
+                <AppCard>
+                    <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h3 className="text-sm font-semibold text-slate-950">Planning</h3>
+                            <p className="text-xs text-slate-500">This week, overdue pressure, and next project deadline.</p>
+                        </div>
+                        <Link href={route('planner.index')} className={secondaryButton}>Open Planner</Link>
+                    </div>
+                    <div className="grid gap-3 p-4 md:grid-cols-3">
+                        <DashboardMetric label="This week" value={planning?.this_week_tasks ?? 0} />
+                        <DashboardMetric label="Overdue" value={planning?.overdue_tasks ?? 0} alert />
+                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                            <div className="text-xs font-medium text-slate-500">Next deadline</div>
+                            <div className="mt-1 truncate text-sm font-semibold text-slate-950">
+                                {planning?.next_project_deadline ? `${planning.next_project_deadline.name} / ${planning.next_project_deadline.due_date}` : 'No project deadline'}
+                            </div>
+                        </div>
                     </div>
                 </AppCard>
 
@@ -211,6 +232,15 @@ function HomeTaskRow({ task }) {
             <Badge tone={statusTone[task.status]}>{task.status}</Badge>
             <DueDate date={task.due_date} status={task.status} />
         </Link>
+    );
+}
+
+function DashboardMetric({ label, value, alert = false }) {
+    return (
+        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-xs font-medium text-slate-500">{label}</div>
+            <div className={`mt-1 text-xl font-semibold ${alert && Number(value) > 0 ? 'text-rose-600' : 'text-slate-950'}`}>{value}</div>
+        </div>
     );
 }
 

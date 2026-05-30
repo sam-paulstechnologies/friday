@@ -7,6 +7,7 @@ use App\Models\Area;
 use App\Models\Blocker;
 use App\Models\Decision;
 use App\Models\Portfolio;
+use App\Models\Project;
 use App\Models\Risk;
 use App\Models\Task;
 use App\Models\WaitingItem;
@@ -53,6 +54,25 @@ class DashboardController extends Controller
             ->limit(8)
             ->get();
 
+        $planningOpenTasks = Task::query()
+            ->when(
+                $workspaceIds !== [],
+                fn ($query) => $query->whereIn('workspace_id', $workspaceIds),
+                fn ($query) => $query->whereRaw('1 = 0'),
+            )
+            ->active();
+
+        $nextProjectDeadline = Project::query()
+            ->when(
+                $workspaceIds !== [],
+                fn ($query) => $query->whereIn('workspace_id', $workspaceIds),
+                fn ($query) => $query->whereRaw('1 = 0'),
+            )
+            ->where('status', '!=', 'archived')
+            ->whereDate('due_date', '>=', now()->toDateString())
+            ->orderBy('due_date')
+            ->first();
+
         return Inertia::render('Dashboard', [
             'date' => now()->format('l, F j, Y'),
             'summary' => [
@@ -76,6 +96,18 @@ class DashboardController extends Controller
             'weeklyFocus' => $groups->get('upcoming')->map(fn (Task $task) => $this->taskResource($task))->values(),
             'completedToday' => $groups->get('completed_today')->map(fn (Task $task) => $this->taskResource($task))->values(),
             'completedTasks' => $completedTasks->map(fn (Task $task) => $this->taskResource($task))->values(),
+            'planning' => [
+                'this_week_tasks' => (clone $planningOpenTasks)
+                    ->whereDate('due_date', '>=', now()->toDateString())
+                    ->whereDate('due_date', '<=', now()->endOfWeek(\Carbon\CarbonInterface::SUNDAY)->toDateString())
+                    ->count(),
+                'overdue_tasks' => (clone $planningOpenTasks)->overdue()->count(),
+                'next_project_deadline' => $nextProjectDeadline ? [
+                    'id' => $nextProjectDeadline->id,
+                    'name' => $nextProjectDeadline->name,
+                    'due_date' => $nextProjectDeadline->due_date?->toDateString(),
+                ] : null,
+            ],
             'spiritualReading' => $spiritualReadingSummaryService->forUser($user),
             'commandCenter' => [
                 'waiting' => $this->commandObjects(WaitingItem::class, $user->id, 'open', $commandTasks->get('waiting_for', collect())),
