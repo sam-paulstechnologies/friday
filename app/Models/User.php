@@ -82,6 +82,16 @@ class User extends Authenticatable
         return $this->hasMany(CalendarConnection::class);
     }
 
+    public function aiConversations(): HasMany
+    {
+        return $this->hasMany(AiConversation::class);
+    }
+
+    public function aiActions(): HasMany
+    {
+        return $this->hasMany(AiAction::class);
+    }
+
     public function accessibleWorkspaceIds(): array
     {
         $memberIds = $this->workspaces()

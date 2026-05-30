@@ -1,4 +1,5 @@
 import ApplicationLogo from '@/Components/ApplicationLogo';
+import AssistantPanel from '@/Components/AssistantPanel';
 import Dropdown from '@/Components/Dropdown';
 import { Link, router, usePage } from '@inertiajs/react';
 import { useEffect, useState } from 'react';
@@ -216,6 +217,7 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
                     </div>
                     {children}
                 </main>
+                <AssistantPanel />
             </div>
         </div>
     );

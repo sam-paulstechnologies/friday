@@ -55,4 +55,12 @@ return [
         ],
     ],
 
+    'ai_assistant' => [
+        'enabled' => env('AI_ASSISTANT_ENABLED', false),
+        'provider' => env('AI_PROVIDER', 'mock'),
+        'model' => env('AI_MODEL'),
+        'api_key' => env('AI_API_KEY'),
+        'local_endpoint' => env('AI_LOCAL_ENDPOINT'),
+    ],
+
 ];

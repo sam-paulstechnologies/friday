@@ -297,11 +297,11 @@ function AskFridayWidget() {
     return (
         <AppCard>
             <div className="border-b border-slate-200 px-4 py-3">
-                <h3 className="text-sm font-semibold text-slate-950">Ask Friday</h3>
-                <p className="text-xs text-slate-500">Quick prompts for AI Brain workflows.</p>
+                <h3 className="text-sm font-semibold text-slate-950">Ask Miriam</h3>
+                <p className="text-xs text-slate-500">Quick prompts for the assistant.</p>
             </div>
             <div className="space-y-2 p-4">
-                {prompts.map((prompt) => <Link key={prompt} href={route('settings.ai.edit')} className="block rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">{prompt}</Link>)}
+                {prompts.map((prompt) => <Link key={prompt} href={route('assistant.index')} className="block rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">{prompt}</Link>)}
             </div>
         </AppCard>
     );

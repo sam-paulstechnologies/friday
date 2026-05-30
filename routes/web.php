@@ -3,6 +3,7 @@
 use App\Http\Controllers\CalendarController;
 use App\Http\Controllers\ApprovalController;
 use App\Http\Controllers\AreaController;
+use App\Http\Controllers\AssistantController;
 use App\Http\Controllers\BlockerController;
 use App\Http\Controllers\CustomFieldController;
 use App\Http\Controllers\DashboardController;
@@ -53,6 +54,9 @@ Route::get('/dashboard', DashboardController::class)->middleware(['auth', 'verif
 Route::post('/webhooks/slack/events', SlackWebhookController::class)->name('webhooks.slack.events');
 
 Route::middleware('auth')->group(function () {
+    Route::get('/assistant', [AssistantController::class, 'index'])->name('assistant.index');
+    Route::post('/assistant/message', [AssistantController::class, 'message'])->name('assistant.message');
+    Route::post('/assistant/actions/create-task', [AssistantController::class, 'createTask'])->name('assistant.actions.create-task');
     Route::get('/today', [TodayController::class, 'index'])->name('today.index');
     Route::patch('/today/tasks/{task}/today', [TodayController::class, 'today'])->name('today.tasks.today');
     Route::patch('/today/tasks/{task}/tomorrow', [TodayController::class, 'tomorrow'])->name('today.tasks.tomorrow');
