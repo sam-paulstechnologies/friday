@@ -33,6 +33,7 @@ use App\Http\Controllers\TaskController;
 use App\Http\Controllers\TaskSubtaskController;
 use App\Http\Controllers\TaskReviewController;
 use App\Http\Controllers\TemplateController;
+use App\Http\Controllers\SlackMedicationActionController;
 use App\Http\Controllers\SlackWebhookController;
 use App\Http\Controllers\SpiritualController;
 use App\Http\Controllers\TodayController;
@@ -54,6 +55,7 @@ Route::get('/', function () {
 Route::get('/dashboard', DashboardController::class)->middleware(['auth', 'verified'])->name('dashboard');
 
 Route::post('/webhooks/slack/events', SlackWebhookController::class)->name('webhooks.slack.events');
+Route::post('/slack/medication/actions', SlackMedicationActionController::class)->name('slack.medication.actions');
 
 Route::middleware('auth')->group(function () {
     Route::get('/assistant', [AssistantController::class, 'index'])->name('assistant.index');

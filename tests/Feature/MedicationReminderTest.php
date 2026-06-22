@@ -302,9 +302,13 @@ class MedicationReminderTest extends TestCase
 
         Http::assertSent(function ($request) {
             $payload = $request->data();
+            $buttonLabels = collect($payload['blocks'][1]['elements'])->pluck('text.text')->all();
 
             return $request->url() === 'https://hooks.slack.test/medication'
                 && $payload['text'] === 'Miriam medication reminder: a scheduled dose is due. Please confirm Taken, Snooze, or Skip.'
+                && in_array('Taken', $buttonLabels, true)
+                && in_array('Snooze 15 min', $buttonLabels, true)
+                && in_array('Skip', $buttonLabels, true)
                 && ! str_contains($payload['text'], '3 tablets')
                 && ! str_contains($payload['text'], 'after breakfast');
         });
@@ -313,6 +317,135 @@ class MedicationReminderTest extends TestCase
             'event_type' => 'slack_reminder_sent',
             'channel' => 'slack',
         ]);
+    }
+
+    public function test_valid_slack_taken_button_marks_dose_taken(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        $this->travelToDubai('2026-06-23 08:31:00');
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+        $log = MedicationDoseLog::firstOrFail();
+
+        $response = $this->postSignedSlackAction('medication_taken', $log->id);
+
+        $response->assertOk()->assertJson(['text' => 'Confirmed. Medication marked as taken.']);
+        $this->assertSame('taken', $log->fresh()->status);
+        $this->assertNull($log->fresh()->next_reminder_at);
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $log->id,
+            'event_type' => 'slack_taken_clicked',
+            'channel' => 'slack',
+        ]);
+    }
+
+    public function test_slack_taken_button_stops_repeat_reminders(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        $this->travelToDubai('2026-06-23 08:31:00');
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+        $log = MedicationDoseLog::firstOrFail();
+
+        $this->postSignedSlackAction('medication_taken', $log->id)->assertOk();
+        $this->travelToDubai('2026-06-23 09:10:00');
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        $this->assertSame(1, $log->fresh()->reminder_attempts);
+        $this->assertSame('taken', $log->fresh()->status);
+    }
+
+    public function test_slack_snooze_button_updates_next_reminder(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, [
+            'dose_key' => 'evening',
+            'schedule_time' => '21:30:00',
+            'hard_deadline_time' => null,
+        ]);
+        $this->travelToDubai('2026-06-23 21:31:00');
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+        $log = MedicationDoseLog::firstOrFail();
+
+        $this->postSignedSlackAction('medication_snooze_15', $log->id)
+            ->assertOk()
+            ->assertJson(['text' => 'Snoozed for 15 minutes.']);
+
+        $this->assertSame('snoozed', $log->fresh()->status);
+        $this->assertSame('2026-06-23 17:46:00', $log->fresh()->next_reminder_at->toDateTimeString());
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $log->id,
+            'event_type' => 'slack_snooze_clicked',
+            'channel' => 'slack',
+        ]);
+    }
+
+    public function test_slack_snooze_button_cannot_exceed_ten_am_for_morning(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '09:00:00']);
+        $this->travelToDubai('2026-06-23 09:50:00');
+        $log = app(MedicationReminderService::class)->ensureLogsForActiveSchedules()->first();
+
+        $this->postSignedSlackAction('medication_snooze_15', $log->id)->assertOk();
+
+        $this->assertSame('snoozed', $log->fresh()->status);
+        $this->assertSame('2026-06-23 06:00:00', $log->fresh()->next_reminder_at->toDateTimeString());
+    }
+
+    public function test_slack_skip_button_requires_reason_or_links_to_health(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        $this->travelToDubai('2026-06-23 08:31:00');
+        $log = app(MedicationReminderService::class)->ensureLogsForActiveSchedules()->first();
+
+        $response = $this->postSignedSlackAction('medication_skip', $log->id);
+
+        $response->assertOk();
+        $this->assertStringContainsString('Open Miriam to enter a skip reason', $response->json('text'));
+        $this->assertStringContainsString('/health', $response->json('text'));
+        $this->assertNotSame('skipped', $log->fresh()->status);
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $log->id,
+            'event_type' => 'slack_skip_clicked',
+            'channel' => 'slack',
+        ]);
+    }
+
+    public function test_invalid_slack_signature_is_rejected(): void
+    {
+        config(['services.slack.signing_secret' => 'test-signing-secret']);
+
+        $this->call(
+            'POST',
+            route('slack.medication.actions', absolute: false),
+            [],
+            [],
+            [],
+            [
+                'CONTENT_TYPE' => 'application/x-www-form-urlencoded',
+                'HTTP_X_SLACK_REQUEST_TIMESTAMP' => (string) time(),
+                'HTTP_X_SLACK_SIGNATURE' => 'v0=invalid',
+            ],
+            http_build_query(['payload' => json_encode($this->slackActionPayload('medication_taken', 1))])
+        )->assertUnauthorized();
+    }
+
+    public function test_duplicate_slack_taken_clicks_are_idempotent(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        $this->travelToDubai('2026-06-23 08:31:00');
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+        $log = MedicationDoseLog::firstOrFail();
+
+        $this->postSignedSlackAction('medication_taken', $log->id)->assertOk();
+        $this->postSignedSlackAction('medication_taken', $log->id)->assertOk();
+
+        $this->assertSame('taken', $log->fresh()->status);
+        $this->assertSame(1, $log->fresh()->events()->where('event_type', 'taken')->count());
+        $this->assertSame(2, $log->fresh()->events()->where('event_type', 'slack_taken_clicked')->count());
     }
 
     public function test_missing_slack_webhook_falls_back_to_database_notification_only(): void
@@ -524,5 +657,44 @@ class MedicationReminderTest extends TestCase
         $now = CarbonImmutable::parse($dateTime, 'Asia/Dubai')->utc();
         CarbonImmutable::setTestNow($now);
         Carbon::setTestNow(Carbon::parse($now->toDateTimeString(), 'UTC'));
+    }
+
+    private function postSignedSlackAction(string $actionId, int $doseLogId)
+    {
+        config(['services.slack.signing_secret' => 'test-signing-secret']);
+
+        $body = http_build_query([
+            'payload' => json_encode($this->slackActionPayload($actionId, $doseLogId)),
+        ]);
+        $timestamp = (string) time();
+        $signature = 'v0='.hash_hmac('sha256', 'v0:'.$timestamp.':'.$body, 'test-signing-secret');
+
+        return $this->call(
+            'POST',
+            route('slack.medication.actions', absolute: false),
+            [],
+            [],
+            [],
+            [
+                'CONTENT_TYPE' => 'application/x-www-form-urlencoded',
+                'HTTP_X_SLACK_REQUEST_TIMESTAMP' => $timestamp,
+                'HTTP_X_SLACK_SIGNATURE' => $signature,
+            ],
+            $body
+        );
+    }
+
+    private function slackActionPayload(string $actionId, int $doseLogId): array
+    {
+        return [
+            'type' => 'block_actions',
+            'user' => ['id' => 'U123'],
+            'actions' => [
+                [
+                    'action_id' => $actionId,
+                    'value' => (string) $doseLogId,
+                ],
+            ],
+        ];
     }
 }

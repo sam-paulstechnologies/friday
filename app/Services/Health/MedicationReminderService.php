@@ -318,6 +318,11 @@ class MedicationReminderService
         ];
     }
 
+    public function recordSlackButtonClick(MedicationDoseLog $log, string $eventType, array $metadata = []): void
+    {
+        $this->recordEvent($log->fresh(['schedule']), $eventType, 'slack', metadata: $metadata);
+    }
+
     private function acknowledge(MedicationDoseLog $log, string $status, string $source, string $channel, ?string $reason = null): MedicationDoseLog
     {
         $log->loadMissing('schedule');
@@ -569,9 +574,7 @@ class MedicationReminderService
         try {
             $response = Http::asJson()
                 ->timeout(5)
-                ->post($webhookUrl, [
-                    'text' => $this->slackReminderMessage($log->schedule, $escalationLevel),
-                ]);
+                ->post($webhookUrl, $this->slackReminderPayload($log, $escalationLevel));
 
             if ($response->successful()) {
                 $this->recordEvent($log, 'slack_reminder_sent', 'slack', metadata: [
@@ -614,6 +617,59 @@ class MedicationReminderService
             'urgent', 'final_pre_deadline' => trim("Urgent Miriam medication reminder: {$schedule->label} is still pending. {$schedule->dosage_text} {$schedule->timing_note}. Please confirm before 10:00."),
             default => trim("Miriam medication reminder: {$schedule->label}: {$schedule->dosage_text} {$schedule->timing_note}. Please confirm Taken, Snooze, or Skip."),
         };
+    }
+
+    private function slackReminderPayload(MedicationDoseLog $log, string $escalationLevel): array
+    {
+        $message = $this->slackReminderMessage($log->schedule, $escalationLevel);
+
+        return [
+            'text' => $message,
+            'blocks' => [
+                [
+                    'type' => 'section',
+                    'text' => [
+                        'type' => 'mrkdwn',
+                        'text' => $message,
+                    ],
+                ],
+                [
+                    'type' => 'actions',
+                    'elements' => [
+                        [
+                            'type' => 'button',
+                            'text' => [
+                                'type' => 'plain_text',
+                                'text' => 'Taken',
+                            ],
+                            'style' => 'primary',
+                            'action_id' => 'medication_taken',
+                            'value' => (string) $log->id,
+                        ],
+                        [
+                            'type' => 'button',
+                            'text' => [
+                                'type' => 'plain_text',
+                                'text' => 'Snooze 15 min',
+                            ],
+                            'action_id' => 'medication_snooze_15',
+                            'value' => (string) $log->id,
+                        ],
+                        [
+                            'type' => 'button',
+                            'text' => [
+                                'type' => 'plain_text',
+                                'text' => 'Skip',
+                            ],
+                            'style' => 'danger',
+                            'action_id' => 'medication_skip',
+                            'value' => (string) $log->id,
+                            'url' => route('health.index'),
+                        ],
+                    ],
+                ],
+            ],
+        ];
     }
 
     private function recordEvent(MedicationDoseLog $log, string $type, ?string $channel = null, ?string $device = null, array $metadata = []): void
