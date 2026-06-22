@@ -1,0 +1,413 @@
+<?php
+
+namespace App\Services\Health;
+
+use App\Jobs\SendMedicationReminderJob;
+use App\Models\DailyHealthLog;
+use App\Models\MedicationDoseLog;
+use App\Models\MedicationDoseSchedule;
+use App\Models\MedicationReminderEvent;
+use App\Models\User;
+use App\Notifications\TaskFlowNotification;
+use Carbon\CarbonImmutable;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+
+class MedicationReminderService
+{
+    public const DEFAULT_TIMEZONE = 'Asia/Dubai';
+    public const ACKNOWLEDGED_STATUSES = ['taken', 'skipped'];
+
+    public function configureDailyRoutine(User $user, string $breakfastTime, string $dinnerTime): Collection
+    {
+        $workspaceId = collect($user->accessibleWorkspaceIds())->first();
+
+        return collect([
+            [
+                'dose_key' => 'morning',
+                'label' => 'Morning dose',
+                'dosage_text' => '3 tablets',
+                'timing_note' => 'after breakfast',
+                'schedule_time' => $breakfastTime,
+            ],
+            [
+                'dose_key' => 'evening',
+                'label' => 'Evening dose',
+                'dosage_text' => '1 tablet',
+                'timing_note' => 'after dinner',
+                'schedule_time' => $dinnerTime,
+            ],
+        ])->map(fn (array $dose) => MedicationDoseSchedule::updateOrCreate(
+            [
+                'user_id' => $user->id,
+                'workspace_id' => $workspaceId,
+                'dose_key' => $dose['dose_key'],
+            ],
+            [
+                ...$dose,
+                'timezone' => self::DEFAULT_TIMEZONE,
+                'active' => true,
+                'repeat_interval_minutes' => 30,
+                'quiet_hours_start' => '22:00:00',
+                'quiet_hours_end' => '07:00:00',
+                'hide_details_in_notifications' => true,
+                'default_channel' => 'database',
+                'metadata' => [
+                    'routine_source' => 'miriam_medication_routine_configure',
+                    'medical_guidance_locked' => true,
+                ],
+            ]
+        ));
+    }
+
+    public function ensureLogsForActiveSchedules(?CarbonImmutable $now = null): Collection
+    {
+        $now ??= CarbonImmutable::now('UTC');
+
+        return MedicationDoseSchedule::query()
+            ->with('user')
+            ->where('active', true)
+            ->whereNotNull('schedule_time')
+            ->get()
+            ->map(fn (MedicationDoseSchedule $schedule) => $this->ensureLogForSchedule($schedule, $now))
+            ->filter()
+            ->values();
+    }
+
+    public function ensureLogForSchedule(MedicationDoseSchedule $schedule, ?CarbonImmutable $now = null): MedicationDoseLog
+    {
+        $now ??= CarbonImmutable::now('UTC');
+        $timezone = $schedule->timezone ?: self::DEFAULT_TIMEZONE;
+        $doseDate = $now->setTimezone($timezone)->toDateString();
+        $scheduledFor = $this->scheduledFor($schedule, $doseDate);
+
+        $log = MedicationDoseLog::query()
+            ->where('dose_schedule_id', $schedule->id)
+            ->whereDate('dose_date', $doseDate)
+            ->first();
+
+        if (! $log) {
+            $log = MedicationDoseLog::create([
+                'user_id' => $schedule->user_id,
+                'workspace_id' => $schedule->workspace_id,
+                'dose_schedule_id' => $schedule->id,
+                'dose_date' => $doseDate,
+                'scheduled_for' => $scheduledFor,
+                'scheduled_timezone' => $timezone,
+                'status' => 'pending',
+                'next_reminder_at' => $scheduledFor,
+            ]);
+        }
+
+        if ($log->wasRecentlyCreated) {
+            $this->recordEvent($log, 'scheduled', metadata: [
+                'scheduled_for' => $scheduledFor->toIso8601String(),
+                'timezone' => $timezone,
+            ]);
+        }
+
+        return $log;
+    }
+
+    public function queueDueReminders(?CarbonImmutable $now = null, bool $sync = false, ?string $channel = null): array
+    {
+        $now ??= CarbonImmutable::now('UTC');
+        $this->ensureLogsForActiveSchedules($now);
+
+        $logs = MedicationDoseLog::query()
+            ->with(['schedule', 'user'])
+            ->whereIn('status', ['pending', 'snoozed', 'overdue'])
+            ->whereNotNull('next_reminder_at')
+            ->where('next_reminder_at', '<=', $now)
+            ->get();
+
+        $queued = 0;
+        $suppressed = 0;
+
+        foreach ($logs as $log) {
+            if (! $log->schedule || ! $log->user) {
+                continue;
+            }
+
+            if ($this->isQuietTime($log->schedule, $now)) {
+                $this->suppressForQuietHours($log, $now);
+                $suppressed++;
+                continue;
+            }
+
+            if ($sync) {
+                $this->deliverReminder($log->id, $channel ?: $log->schedule->default_channel, $now);
+            } else {
+                SendMedicationReminderJob::dispatch($log->id, $channel ?: $log->schedule->default_channel);
+            }
+
+            $queued++;
+            $this->recordEvent($log, 'reminder_queued', $channel ?: $log->schedule->default_channel);
+        }
+
+        return ['queued' => $queued, 'quiet_hours_suppressed' => $suppressed];
+    }
+
+    public function deliverReminder(int $doseLogId, string $channel = 'database', ?CarbonImmutable $now = null): ?MedicationDoseLog
+    {
+        $now ??= CarbonImmutable::now('UTC');
+
+        return DB::transaction(function () use ($doseLogId, $channel, $now): ?MedicationDoseLog {
+            /** @var MedicationDoseLog|null $log */
+            $log = MedicationDoseLog::query()
+                ->with(['schedule', 'user'])
+                ->whereKey($doseLogId)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $log || ! $log->schedule || ! $log->user) {
+                return null;
+            }
+
+            if (in_array($log->status, self::ACKNOWLEDGED_STATUSES, true)) {
+                $this->recordEvent($log, 'duplicate_prevented', $channel);
+
+                return $log;
+            }
+
+            if ($log->next_reminder_at && $log->next_reminder_at->greaterThan($now)) {
+                $this->recordEvent($log, 'duplicate_prevented', $channel);
+
+                return $log;
+            }
+
+            if ($this->isQuietTime($log->schedule, $now)) {
+                $this->suppressForQuietHours($log, $now);
+
+                return $log->refresh();
+            }
+
+            $attempts = $log->reminder_attempts + 1;
+            $log->update([
+                'status' => $log->scheduled_for && $log->scheduled_for->lessThan($now) ? 'overdue' : $log->status,
+                'reminder_attempts' => $attempts,
+                'first_reminded_at' => $log->first_reminded_at ?: $now,
+                'last_reminded_at' => $now,
+                'next_reminder_at' => $now->addMinutes(max(5, (int) $log->schedule->repeat_interval_minutes)),
+                'last_delivery_channel' => $channel,
+            ]);
+
+            $log->user->notify(new TaskFlowNotification(
+                'Medication reminder',
+                $this->notificationMessage($log->schedule),
+                actionUrl: route('health.index', absolute: false),
+                eventType: 'medication_reminder'
+            ));
+
+            $this->recordEvent($log->fresh(['schedule']), 'reminder_sent', $channel, metadata: [
+                'attempt' => $attempts,
+                'preview_hidden' => (bool) $log->schedule->hide_details_in_notifications,
+            ]);
+
+            return $log->fresh(['schedule']);
+        });
+    }
+
+    public function markTaken(MedicationDoseLog $log, string $source = 'web', string $channel = 'web'): MedicationDoseLog
+    {
+        return $this->acknowledge($log, 'taken', $source, $channel);
+    }
+
+    public function skip(MedicationDoseLog $log, ?string $reason = null, string $source = 'web', string $channel = 'web'): MedicationDoseLog
+    {
+        return $this->acknowledge($log, 'skipped', $source, $channel, $reason);
+    }
+
+    public function snooze(MedicationDoseLog $log, int $minutes = 30, string $source = 'web', string $channel = 'web'): MedicationDoseLog
+    {
+        $log->loadMissing('schedule');
+        abort_if(in_array($log->status, self::ACKNOWLEDGED_STATUSES, true), 422, 'This dose is already acknowledged.');
+
+        $snoozedUntil = CarbonImmutable::now('UTC')->addMinutes(max(5, min($minutes, 240)));
+        $log->update([
+            'status' => 'snoozed',
+            'next_reminder_at' => $snoozedUntil,
+            'acknowledgement_source' => $source,
+            'acknowledgement_channel' => $channel,
+        ]);
+
+        $this->recordEvent($log->fresh(['schedule']), 'snoozed', $channel, metadata: [
+            'source' => $source,
+            'next_reminder_at' => $snoozedUntil->toIso8601String(),
+        ]);
+
+        $this->syncDailyHealthStatus($log->fresh(), 'snoozed');
+
+        return $log->fresh(['schedule']);
+    }
+
+    public function statusForUser(User $user, ?CarbonImmutable $now = null): array
+    {
+        $now ??= CarbonImmutable::now('UTC');
+        $logs = MedicationDoseSchedule::query()
+            ->where('user_id', $user->id)
+            ->where('active', true)
+            ->orderBy('schedule_time')
+            ->get()
+            ->map(fn (MedicationDoseSchedule $schedule) => $this->ensureLogForSchedule($schedule, $now)->fresh(['schedule', 'events']))
+            ->values();
+
+        $items = $logs->map(function (MedicationDoseLog $log) use ($now): array {
+            $schedule = $log->schedule;
+            $overdue = $log->scheduled_for && $log->scheduled_for->lessThan($now) && ! in_array($log->status, self::ACKNOWLEDGED_STATUSES, true);
+
+            return [
+                'id' => $log->id,
+                'schedule_id' => $schedule?->id,
+                'label' => $schedule?->label,
+                'dosage_text' => $schedule?->dosage_text,
+                'timing_note' => $schedule?->timing_note,
+                'schedule_time' => $schedule?->schedule_time,
+                'timezone' => $log->scheduled_timezone,
+                'status' => $overdue && $log->status === 'pending' ? 'overdue' : $log->status,
+                'scheduled_for' => $log->scheduled_for?->toDateTimeString(),
+                'scheduled_for_local' => $log->scheduled_for?->copy()->setTimezone($log->scheduled_timezone)->format('Y-m-d H:i'),
+                'reminder_attempts' => $log->reminder_attempts,
+                'last_reminded_at' => $log->last_reminded_at?->toDateTimeString(),
+                'next_reminder_at' => $log->next_reminder_at?->toDateTimeString(),
+                'acknowledged_at' => $log->acknowledged_at?->toDateTimeString(),
+                'acknowledgement_channel' => $log->acknowledgement_channel,
+                'last_delivery_channel' => $log->last_delivery_channel,
+                'skip_reason' => $log->skip_reason,
+                'overdue' => $overdue,
+                'history' => $log->events
+                    ->sortByDesc('occurred_at')
+                    ->take(6)
+                    ->map(fn ($event) => [
+                        'event_type' => $event->event_type,
+                        'channel' => $event->channel,
+                        'occurred_at' => $event->occurred_at?->toDateTimeString(),
+                    ])
+                    ->values(),
+            ];
+        });
+
+        $pending = $items->whereNotIn('status', self::ACKNOWLEDGED_STATUSES);
+
+        return [
+            'items' => $items,
+            'pending_count' => $pending->count(),
+            'taken_count' => $items->where('status', 'taken')->count(),
+            'overdue_count' => $items->where('overdue', true)->count(),
+            'status_label' => $items->isEmpty()
+                ? 'No medication routine configured'
+                : ($pending->count() > 0 ? 'Medication pending' : 'Medication confirmed'),
+        ];
+    }
+
+    private function acknowledge(MedicationDoseLog $log, string $status, string $source, string $channel, ?string $reason = null): MedicationDoseLog
+    {
+        $log->loadMissing('schedule');
+        $now = CarbonImmutable::now('UTC');
+        $log->update([
+            'status' => $status,
+            'acknowledged_at' => $now,
+            'next_reminder_at' => null,
+            'acknowledgement_source' => $source,
+            'acknowledgement_channel' => $channel,
+            'skip_reason' => $status === 'skipped' ? $reason : null,
+        ]);
+
+        $this->recordEvent($log->fresh(['schedule']), $status, $channel, metadata: [
+            'source' => $source,
+            'has_skip_reason' => filled($reason),
+        ]);
+
+        $this->syncDailyHealthStatus($log->fresh(), $status);
+
+        return $log->fresh(['schedule']);
+    }
+
+    private function suppressForQuietHours(MedicationDoseLog $log, CarbonImmutable $now): void
+    {
+        $quietEndsAt = $this->quietHoursEndAt($log->schedule, $now);
+        $log->update([
+            'status' => 'overdue',
+            'next_reminder_at' => $quietEndsAt,
+        ]);
+
+        $this->recordEvent($log->fresh(['schedule']), 'reminder_suppressed_quiet_hours', metadata: [
+            'next_reminder_at' => $quietEndsAt->toIso8601String(),
+        ]);
+    }
+
+    private function scheduledFor(MedicationDoseSchedule $schedule, string $doseDate): CarbonImmutable
+    {
+        return CarbonImmutable::createFromFormat(
+            'Y-m-d H:i:s',
+            $doseDate.' '.($schedule->schedule_time ?: '00:00:00'),
+            $schedule->timezone ?: self::DEFAULT_TIMEZONE
+        )->utc();
+    }
+
+    private function isQuietTime(MedicationDoseSchedule $schedule, CarbonImmutable $now): bool
+    {
+        if (! $schedule->quiet_hours_start || ! $schedule->quiet_hours_end) {
+            return false;
+        }
+
+        $local = $now->setTimezone($schedule->timezone ?: self::DEFAULT_TIMEZONE);
+        $time = $local->format('H:i:s');
+        $start = $schedule->quiet_hours_start;
+        $end = $schedule->quiet_hours_end;
+
+        if ($start <= $end) {
+            return $time >= $start && $time < $end;
+        }
+
+        return $time >= $start || $time < $end;
+    }
+
+    private function quietHoursEndAt(MedicationDoseSchedule $schedule, CarbonImmutable $now): CarbonImmutable
+    {
+        $timezone = $schedule->timezone ?: self::DEFAULT_TIMEZONE;
+        $local = $now->setTimezone($timezone);
+        $end = $schedule->quiet_hours_end ?: '07:00:00';
+        $endToday = CarbonImmutable::createFromFormat('Y-m-d H:i:s', $local->toDateString().' '.$end, $timezone);
+
+        if ($local->lessThan($endToday)) {
+            return $endToday->utc();
+        }
+
+        return $endToday->addDay()->utc();
+    }
+
+    private function notificationMessage(MedicationDoseSchedule $schedule): string
+    {
+        if ($schedule->hide_details_in_notifications) {
+            return 'A scheduled dose is due. Open Miriam to confirm Taken, Snooze, or Skip.';
+        }
+
+        return trim("{$schedule->label}: {$schedule->dosage_text} {$schedule->timing_note}. Open Miriam to confirm Taken, Snooze, or Skip.");
+    }
+
+    private function recordEvent(MedicationDoseLog $log, string $type, ?string $channel = null, ?string $device = null, array $metadata = []): void
+    {
+        MedicationReminderEvent::create([
+            'dose_log_id' => $log->id,
+            'dose_schedule_id' => $log->dose_schedule_id,
+            'user_id' => $log->user_id,
+            'workspace_id' => $log->workspace_id,
+            'event_type' => $type,
+            'channel' => $channel,
+            'device' => $device,
+            'occurred_at' => CarbonImmutable::now('UTC'),
+            'metadata' => $metadata,
+        ]);
+    }
+
+    private function syncDailyHealthStatus(MedicationDoseLog $log, string $status): void
+    {
+        DailyHealthLog::query()
+            ->where('user_id', $log->user_id)
+            ->whereDate('log_date', CarbonImmutable::now(self::DEFAULT_TIMEZONE)->toDateString())
+            ->latest()
+            ->first()
+            ?->update(['medication_status' => $status]);
+    }
+}
