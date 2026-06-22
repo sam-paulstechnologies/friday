@@ -19,6 +19,8 @@ class MedicationReminderService
 {
     public const DEFAULT_TIMEZONE = 'Asia/Dubai';
     public const ACKNOWLEDGED_STATUSES = ['taken', 'skipped'];
+    private const MORNING_DEADLINE_TIME = '10:00:00';
+    private const CRITICAL_REPEAT_MINUTES = 5;
 
     public function configureDailyRoutine(User $user, string $breakfastTime, string $dinnerTime): Collection
     {
@@ -31,6 +33,7 @@ class MedicationReminderService
                 'dosage_text' => '3 tablets',
                 'timing_note' => 'after breakfast',
                 'schedule_time' => $breakfastTime,
+                'hard_deadline_time' => self::MORNING_DEADLINE_TIME,
             ],
             [
                 'dose_key' => 'evening',
@@ -38,6 +41,7 @@ class MedicationReminderService
                 'dosage_text' => '1 tablet',
                 'timing_note' => 'after dinner',
                 'schedule_time' => $dinnerTime,
+                'hard_deadline_time' => null,
             ],
         ])->map(fn (array $dose) => MedicationDoseSchedule::updateOrCreate(
             [
@@ -118,7 +122,7 @@ class MedicationReminderService
 
         $logs = MedicationDoseLog::query()
             ->with(['schedule', 'user'])
-            ->whereIn('status', ['pending', 'snoozed', 'overdue'])
+            ->whereIn('status', ['pending', 'snoozed', 'overdue', 'critical_overdue'])
             ->whereNotNull('next_reminder_at')
             ->where('next_reminder_at', '<=', $now)
             ->get();
@@ -185,12 +189,14 @@ class MedicationReminderService
             }
 
             $attempts = $log->reminder_attempts + 1;
+            $escalationLevel = $this->escalationLevel($log, $now);
+            $nextReminderAt = $this->nextReminderAt($log, $now);
             $log->update([
-                'status' => $log->scheduled_for && $log->scheduled_for->lessThan($now) ? 'overdue' : $log->status,
+                'status' => $this->reminderStatus($log, $now),
                 'reminder_attempts' => $attempts,
                 'first_reminded_at' => $log->first_reminded_at ?: $now,
                 'last_reminded_at' => $now,
-                'next_reminder_at' => $now->addMinutes(max(5, (int) $log->schedule->repeat_interval_minutes)),
+                'next_reminder_at' => $nextReminderAt,
                 'last_delivery_channel' => $channel,
             ]);
 
@@ -203,11 +209,13 @@ class MedicationReminderService
 
             $this->recordEvent($log->fresh(['schedule']), 'reminder_sent', $channel, metadata: [
                 'attempt' => $attempts,
+                'escalation_level' => $escalationLevel,
+                'next_reminder_at' => $nextReminderAt?->toIso8601String(),
                 'preview_hidden' => (bool) $log->schedule->hide_details_in_notifications,
             ]);
 
             $freshLog = $log->fresh(['schedule']);
-            $this->sendSlackReminder($freshLog, $attempts);
+            $this->sendSlackReminder($freshLog, $attempts, $escalationLevel);
 
             return $freshLog;
         });
@@ -220,6 +228,8 @@ class MedicationReminderService
 
     public function skip(MedicationDoseLog $log, ?string $reason = null, string $source = 'web', string $channel = 'web'): MedicationDoseLog
     {
+        abort_if(blank($reason), 422, 'A skip reason is required.');
+
         return $this->acknowledge($log, 'skipped', $source, $channel, $reason);
     }
 
@@ -228,7 +238,8 @@ class MedicationReminderService
         $log->loadMissing('schedule');
         abort_if(in_array($log->status, self::ACKNOWLEDGED_STATUSES, true), 422, 'This dose is already acknowledged.');
 
-        $snoozedUntil = CarbonImmutable::now('UTC')->addMinutes(max(5, min($minutes, 240)));
+        $now = CarbonImmutable::now('UTC');
+        $snoozedUntil = $this->snoozeUntil($log, $now, max(5, min($minutes, 240)));
         $log->update([
             'status' => 'snoozed',
             'next_reminder_at' => $snoozedUntil,
@@ -260,6 +271,7 @@ class MedicationReminderService
         $items = $logs->map(function (MedicationDoseLog $log) use ($now): array {
             $schedule = $log->schedule;
             $overdue = $log->scheduled_for && $log->scheduled_for->lessThan($now) && ! in_array($log->status, self::ACKNOWLEDGED_STATUSES, true);
+            $critical = $this->isPastHardDeadline($log, $now) && ! in_array($log->status, self::ACKNOWLEDGED_STATUSES, true);
 
             return [
                 'id' => $log->id,
@@ -269,7 +281,7 @@ class MedicationReminderService
                 'timing_note' => $schedule?->timing_note,
                 'schedule_time' => $schedule?->schedule_time,
                 'timezone' => $log->scheduled_timezone,
-                'status' => $overdue && $log->status === 'pending' ? 'overdue' : $log->status,
+                'status' => $critical ? 'critical_overdue' : ($overdue && $log->status === 'pending' ? 'overdue' : $log->status),
                 'scheduled_for' => $log->scheduled_for?->toDateTimeString(),
                 'scheduled_for_local' => $log->scheduled_for?->copy()->setTimezone($log->scheduled_timezone)->format('Y-m-d H:i'),
                 'reminder_attempts' => $log->reminder_attempts,
@@ -280,6 +292,7 @@ class MedicationReminderService
                 'last_delivery_channel' => $log->last_delivery_channel,
                 'skip_reason' => $log->skip_reason,
                 'overdue' => $overdue,
+                'critical_overdue' => $critical,
                 'history' => $log->events
                     ->sortByDesc('occurred_at')
                     ->take(6)
@@ -391,13 +404,162 @@ class MedicationReminderService
         return trim("{$schedule->label}: {$schedule->dosage_text} {$schedule->timing_note}. Open Miriam to confirm Taken, Snooze, or Skip.");
     }
 
-    private function sendSlackReminder(MedicationDoseLog $log, int $attempt): void
+    private function reminderStatus(MedicationDoseLog $log, CarbonImmutable $now): string
+    {
+        if ($this->isPastHardDeadline($log, $now)) {
+            return 'critical_overdue';
+        }
+
+        if ($log->scheduled_for && $this->immutableUtc($log->scheduled_for)->lessThanOrEqualTo($now)) {
+            return 'overdue';
+        }
+
+        return $log->status;
+    }
+
+    private function escalationLevel(MedicationDoseLog $log, CarbonImmutable $now): string
+    {
+        $deadline = $this->hardDeadlineAt($log);
+
+        if (! $deadline || ! $log->scheduled_for) {
+            return 'normal';
+        }
+
+        $scheduledFor = $this->immutableUtc($log->scheduled_for);
+
+        if ($now->greaterThanOrEqualTo($deadline)) {
+            return 'critical_overdue';
+        }
+
+        if ($now->greaterThanOrEqualTo($deadline->subMinutes(5))) {
+            return 'final_pre_deadline';
+        }
+
+        $minutesAfterSchedule = $scheduledFor->diffInMinutes($now, false);
+
+        if ($minutesAfterSchedule >= 45) {
+            return 'urgent';
+        }
+
+        if ($minutesAfterSchedule >= 30) {
+            return 'stronger';
+        }
+
+        if ($minutesAfterSchedule >= 15) {
+            return 'reminder';
+        }
+
+        return 'normal';
+    }
+
+    private function nextReminderAt(MedicationDoseLog $log, CarbonImmutable $now): CarbonImmutable
+    {
+        $deadline = $this->hardDeadlineAt($log);
+
+        if (! $deadline || ! $log->scheduled_for) {
+            return $now->addMinutes(max(5, (int) $log->schedule->repeat_interval_minutes));
+        }
+
+        if ($now->greaterThanOrEqualTo($deadline)) {
+            return $now->addMinutes(self::CRITICAL_REPEAT_MINUTES);
+        }
+
+        $scheduledFor = $this->immutableUtc($log->scheduled_for);
+        $candidates = collect([
+            $scheduledFor->addMinutes(15),
+            $scheduledFor->addMinutes(30),
+            $scheduledFor->addMinutes(45),
+            $deadline->subMinutes(5),
+            $deadline,
+        ])
+            ->filter(fn (CarbonImmutable $candidate) => $candidate->greaterThan($now))
+            ->sortBy(fn (CarbonImmutable $candidate) => $candidate->getTimestamp())
+            ->values();
+
+        return $candidates->first() ?: $deadline;
+    }
+
+    private function snoozeUntil(MedicationDoseLog $log, CarbonImmutable $now, int $minutes): CarbonImmutable
+    {
+        $requested = $now->addMinutes($minutes);
+        $deadline = $this->hardDeadlineAt($log);
+
+        if (! $deadline) {
+            return $requested;
+        }
+
+        if ($now->greaterThanOrEqualTo($deadline)) {
+            return $now->addMinutes(self::CRITICAL_REPEAT_MINUTES);
+        }
+
+        return $requested->lessThanOrEqualTo($deadline) ? $requested : $deadline;
+    }
+
+    private function isPastHardDeadline(MedicationDoseLog $log, CarbonImmutable $now): bool
+    {
+        $deadline = $this->hardDeadlineAt($log);
+
+        return $deadline && $now->greaterThanOrEqualTo($deadline);
+    }
+
+    private function hardDeadlineAt(MedicationDoseLog $log): ?CarbonImmutable
+    {
+        $log->loadMissing('schedule');
+        $schedule = $log->schedule;
+
+        if (! $schedule) {
+            return null;
+        }
+
+        $deadlineTime = $this->hardDeadlineTime($schedule);
+
+        if (! $deadlineTime) {
+            return null;
+        }
+
+        $timezone = $schedule->timezone ?: self::DEFAULT_TIMEZONE;
+        $doseDate = $log->dose_date?->toDateString()
+            ?: $this->immutableUtc($log->scheduled_for ?? CarbonImmutable::now('UTC'))->setTimezone($timezone)->toDateString();
+
+        return CarbonImmutable::createFromFormat('Y-m-d H:i:s', $doseDate.' '.$deadlineTime, $timezone)->utc();
+    }
+
+    private function hardDeadlineTime(MedicationDoseSchedule $schedule): ?string
+    {
+        if ($schedule->hard_deadline_time) {
+            return strlen((string) $schedule->hard_deadline_time) === 5
+                ? $schedule->hard_deadline_time.':00'
+                : (string) $schedule->hard_deadline_time;
+        }
+
+        if ($schedule->dose_key === 'morning') {
+            return self::MORNING_DEADLINE_TIME;
+        }
+
+        return null;
+    }
+
+    private function immutableUtc(mixed $value): CarbonImmutable
+    {
+        if ($value instanceof CarbonImmutable) {
+            return $value->utc();
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            return CarbonImmutable::instance($value)->utc();
+        }
+
+        return CarbonImmutable::parse($value)->utc();
+    }
+
+    private function sendSlackReminder(MedicationDoseLog $log, int $attempt, string $escalationLevel): void
     {
         $webhookUrl = config('services.slack.webhook_url');
 
         if (! filled($webhookUrl)) {
             $this->recordEvent($log, 'slack_reminder_skipped', 'slack', metadata: [
                 'attempt' => $attempt,
+                'escalation_level' => $escalationLevel,
                 'reason' => 'webhook_missing',
             ]);
 
@@ -408,12 +570,13 @@ class MedicationReminderService
             $response = Http::asJson()
                 ->timeout(5)
                 ->post($webhookUrl, [
-                    'text' => $this->slackReminderMessage($log->schedule),
+                    'text' => $this->slackReminderMessage($log->schedule, $escalationLevel),
                 ]);
 
             if ($response->successful()) {
                 $this->recordEvent($log, 'slack_reminder_sent', 'slack', metadata: [
                     'attempt' => $attempt,
+                    'escalation_level' => $escalationLevel,
                     'status' => $response->status(),
                 ]);
 
@@ -422,25 +585,35 @@ class MedicationReminderService
 
             $this->recordEvent($log, 'slack_reminder_failed', 'slack', metadata: [
                 'attempt' => $attempt,
+                'escalation_level' => $escalationLevel,
                 'reason' => 'http_error',
                 'status' => $response->status(),
             ]);
         } catch (Throwable $exception) {
             $this->recordEvent($log, 'slack_reminder_failed', 'slack', metadata: [
                 'attempt' => $attempt,
+                'escalation_level' => $escalationLevel,
                 'reason' => 'exception',
                 'exception' => class_basename($exception),
             ]);
         }
     }
 
-    private function slackReminderMessage(MedicationDoseSchedule $schedule): string
+    private function slackReminderMessage(MedicationDoseSchedule $schedule, string $escalationLevel): string
     {
         if ($schedule->hide_details_in_notifications) {
-            return 'Miriam medication reminder: a scheduled dose is due. Open Miriam to confirm Taken, Snooze, or Skip.';
+            return match ($escalationLevel) {
+                'critical_overdue' => 'Critical Miriam medication reminder: this is overdue. Please confirm Taken or Skip.',
+                'urgent', 'final_pre_deadline' => 'Urgent Miriam medication reminder: this is still pending. Please confirm before 10:00.',
+                default => 'Miriam medication reminder: a scheduled dose is due. Please confirm Taken, Snooze, or Skip.',
+            };
         }
 
-        return trim("Miriam medication reminder: {$schedule->label}: {$schedule->dosage_text} {$schedule->timing_note}. Open Miriam to confirm Taken, Snooze, or Skip.");
+        return match ($escalationLevel) {
+            'critical_overdue' => trim("Critical Miriam medication reminder: {$schedule->label} is overdue. {$schedule->dosage_text} {$schedule->timing_note}. Please confirm Taken or Skip."),
+            'urgent', 'final_pre_deadline' => trim("Urgent Miriam medication reminder: {$schedule->label} is still pending. {$schedule->dosage_text} {$schedule->timing_note}. Please confirm before 10:00."),
+            default => trim("Miriam medication reminder: {$schedule->label}: {$schedule->dosage_text} {$schedule->timing_note}. Please confirm Taken, Snooze, or Skip."),
+        };
     }
 
     private function recordEvent(MedicationDoseLog $log, string $type, ?string $channel = null, ?string $device = null, array $metadata = []): void

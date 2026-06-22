@@ -18,6 +18,13 @@ class MedicationReminderTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['services.slack.webhook_url' => null]);
+    }
+
     protected function tearDown(): void
     {
         Carbon::setTestNow();
@@ -42,6 +49,7 @@ class MedicationReminderTest extends TestCase
             'dosage_text' => '3 tablets',
             'timing_note' => 'after breakfast',
             'schedule_time' => '08:30',
+            'hard_deadline_time' => '10:00:00',
             'timezone' => 'Asia/Dubai',
         ]);
         $this->assertDatabaseHas('medication_dose_schedules', [
@@ -136,7 +144,7 @@ class MedicationReminderTest extends TestCase
         $this->assertSame(2, $log->fresh()->reminder_attempts);
     }
 
-    public function test_skip_accepts_optional_reason_and_stops_future_reminders(): void
+    public function test_skip_requires_reason_and_stops_future_reminders(): void
     {
         [$user] = $this->context();
         $this->schedule($user, ['schedule_time' => '08:30:00']);
@@ -151,6 +159,119 @@ class MedicationReminderTest extends TestCase
         $this->assertSame('skipped', $log->fresh()->status);
         $this->assertSame('not today', $log->fresh()->skip_reason);
         $this->assertSame(1, $log->fresh()->reminder_attempts);
+    }
+
+    public function test_morning_reminder_escalates_before_ten_am_deadline(): void
+    {
+        config(['services.slack.webhook_url' => 'https://hooks.slack.test/medication']);
+        Http::fake([
+            'hooks.slack.test/*' => Http::response('ok', 200),
+        ]);
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '09:00:00']);
+
+        foreach (['09:00:00', '09:15:00', '09:30:00', '09:45:00', '09:55:00'] as $time) {
+            $this->travelToDubai('2026-06-23 '.$time);
+            app(MedicationReminderService::class)->queueDueReminders(sync: true);
+        }
+
+        $log = MedicationDoseLog::firstOrFail();
+        $this->assertSame(5, $log->reminder_attempts);
+        $this->assertSame('2026-06-23 06:00:00', $log->next_reminder_at->toDateTimeString());
+        $this->assertSame(5, $log->events()->where('event_type', 'slack_reminder_sent')->count());
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $log->id,
+            'event_type' => 'reminder_sent',
+            'metadata->escalation_level' => 'stronger',
+        ]);
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $log->id,
+            'event_type' => 'reminder_sent',
+            'metadata->escalation_level' => 'urgent',
+        ]);
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $log->id,
+            'event_type' => 'reminder_sent',
+            'metadata->escalation_level' => 'final_pre_deadline',
+        ]);
+        Http::assertSent(function ($request) {
+            return $request->data()['text'] === 'Urgent Miriam medication reminder: this is still pending. Please confirm before 10:00.';
+        });
+    }
+
+    public function test_morning_dose_becomes_critical_overdue_after_ten(): void
+    {
+        config(['services.slack.webhook_url' => 'https://hooks.slack.test/medication']);
+        Http::fake([
+            'hooks.slack.test/*' => Http::response('ok', 200),
+        ]);
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '09:00:00']);
+        $this->travelToDubai('2026-06-23 10:01:00');
+
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        $log = MedicationDoseLog::firstOrFail();
+        $this->assertSame('critical_overdue', $log->status);
+        $this->assertSame('2026-06-23 06:06:00', $log->next_reminder_at->toDateTimeString());
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $log->id,
+            'event_type' => 'slack_reminder_sent',
+            'metadata->escalation_level' => 'critical_overdue',
+        ]);
+        Http::assertSent(function ($request) {
+            return $request->data()['text'] === 'Critical Miriam medication reminder: this is overdue. Please confirm Taken or Skip.';
+        });
+    }
+
+    public function test_critical_overdue_repeats_until_taken(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '09:00:00']);
+        $this->travelToDubai('2026-06-23 10:01:00');
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+        $this->travelToDubai('2026-06-23 10:06:00');
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        $log = MedicationDoseLog::firstOrFail();
+        $this->assertSame(2, $log->reminder_attempts);
+        $this->assertSame('critical_overdue', $log->status);
+
+        app(MedicationReminderService::class)->markTaken($log->fresh(), 'test', 'test-device');
+        $this->travelToDubai('2026-06-23 10:20:00');
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        $this->assertSame(2, $log->fresh()->reminder_attempts);
+        $this->assertSame('taken', $log->fresh()->status);
+    }
+
+    public function test_morning_snooze_cannot_exceed_ten_am_deadline(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '09:00:00']);
+        $this->travelToDubai('2026-06-23 09:50:00');
+        $log = app(MedicationReminderService::class)->ensureLogsForActiveSchedules()->first();
+
+        app(MedicationReminderService::class)->snooze($log, 30, 'test', 'test-device');
+
+        $this->assertSame('snoozed', $log->fresh()->status);
+        $this->assertSame('2026-06-23 06:00:00', $log->fresh()->next_reminder_at->toDateTimeString());
+    }
+
+    public function test_skip_requires_reason(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '09:00:00']);
+        $this->travelToDubai('2026-06-23 09:01:00');
+        $log = app(MedicationReminderService::class)->ensureLogsForActiveSchedules()->first();
+
+        $this->actingAs($user)
+            ->from(route('health.index'))
+            ->post(route('health.medication-doses.skip', $log), ['reason' => ''])
+            ->assertRedirect(route('health.index'))
+            ->assertSessionHasErrors('reason');
+
+        $this->assertNotSame('skipped', $log->fresh()->status);
     }
 
     public function test_duplicate_dose_logs_and_duplicate_immediate_reminders_are_prevented(): void
@@ -183,7 +304,7 @@ class MedicationReminderTest extends TestCase
             $payload = $request->data();
 
             return $request->url() === 'https://hooks.slack.test/medication'
-                && $payload['text'] === 'Miriam medication reminder: a scheduled dose is due. Open Miriam to confirm Taken, Snooze, or Skip.'
+                && $payload['text'] === 'Miriam medication reminder: a scheduled dose is due. Please confirm Taken, Snooze, or Skip.'
                 && ! str_contains($payload['text'], '3 tablets')
                 && ! str_contains($payload['text'], 'after breakfast');
         });

@@ -17,6 +17,7 @@ class MedicationDoseSchedule extends Model
         'dosage_text',
         'timing_note',
         'schedule_time',
+        'hard_deadline_time',
         'timezone',
         'active',
         'repeat_interval_minutes',

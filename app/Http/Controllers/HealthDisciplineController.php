@@ -143,9 +143,9 @@ class HealthDisciplineController extends Controller
     {
         $this->authorizeDoseLog($request, $doseLog);
         $data = $request->validate([
-            'reason' => ['nullable', 'string', 'max:1000'],
+            'reason' => ['required', 'string', 'max:1000'],
         ]);
-        $reminders->skip($doseLog, $data['reason'] ?? null, 'web', 'web');
+        $reminders->skip($doseLog, $data['reason'], 'web', 'web');
 
         return back()->with('success', 'Dose skipped.');
     }
