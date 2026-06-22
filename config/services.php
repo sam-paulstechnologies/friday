@@ -32,6 +32,7 @@ return [
         'bot_token' => env('SLACK_BOT_TOKEN'),
         'signing_secret' => env('SLACK_SIGNING_SECRET'),
         'default_channel' => env('SLACK_DEFAULT_CHANNEL'),
+        'webhook_url' => env('SLACK_WEBHOOK_URL'),
         'allowed_user_id' => env('SLACK_ALLOWED_USER_ID'),
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

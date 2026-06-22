@@ -11,6 +11,7 @@ use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class MedicationReminderTest extends TestCase
@@ -164,6 +165,114 @@ class MedicationReminderTest extends TestCase
         $this->assertSame(1, MedicationDoseLog::count());
         $this->assertSame(1, MedicationDoseLog::firstOrFail()->reminder_attempts);
         $this->assertSame(1, $user->notifications()->where('data->event_type', 'medication_reminder')->count());
+    }
+
+    public function test_slack_webhook_configured_and_called_with_private_message(): void
+    {
+        config(['services.slack.webhook_url' => 'https://hooks.slack.test/medication']);
+        Http::fake([
+            'hooks.slack.test/*' => Http::response('ok', 200),
+        ]);
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        $this->travelToDubai('2026-06-23 08:31:00');
+
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+
+            return $request->url() === 'https://hooks.slack.test/medication'
+                && $payload['text'] === 'Miriam medication reminder: a scheduled dose is due. Open Miriam to confirm Taken, Snooze, or Skip.'
+                && ! str_contains($payload['text'], '3 tablets')
+                && ! str_contains($payload['text'], 'after breakfast');
+        });
+        $this->assertSame(1, $user->notifications()->where('data->event_type', 'medication_reminder')->count());
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'event_type' => 'slack_reminder_sent',
+            'channel' => 'slack',
+        ]);
+    }
+
+    public function test_missing_slack_webhook_falls_back_to_database_notification_only(): void
+    {
+        config(['services.slack.webhook_url' => null]);
+        Http::fake();
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        $this->travelToDubai('2026-06-23 08:31:00');
+
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        Http::assertNothingSent();
+        $this->assertSame(1, $user->notifications()->where('data->event_type', 'medication_reminder')->count());
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'event_type' => 'slack_reminder_skipped',
+            'channel' => 'slack',
+        ]);
+    }
+
+    public function test_slack_delivery_failure_is_logged_without_failing_database_notification(): void
+    {
+        config(['services.slack.webhook_url' => 'https://hooks.slack.test/medication']);
+        Http::fake([
+            'hooks.slack.test/*' => Http::response('temporary failure', 500),
+        ]);
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        $this->travelToDubai('2026-06-23 08:31:00');
+
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        Http::assertSentCount(1);
+        $this->assertSame(1, $user->notifications()->where('data->event_type', 'medication_reminder')->count());
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'event_type' => 'slack_reminder_failed',
+            'channel' => 'slack',
+        ]);
+    }
+
+    public function test_slack_message_includes_dose_details_only_when_privacy_allows_it(): void
+    {
+        config(['services.slack.webhook_url' => 'https://hooks.slack.test/medication']);
+        Http::fake([
+            'hooks.slack.test/*' => Http::response('ok', 200),
+        ]);
+        [$user] = $this->context();
+        $this->schedule($user, [
+            'schedule_time' => '08:30:00',
+            'hide_details_in_notifications' => false,
+        ]);
+        $this->travelToDubai('2026-06-23 08:31:00');
+
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+
+            return str_contains($payload['text'], 'Morning dose')
+                && str_contains($payload['text'], '3 tablets')
+                && str_contains($payload['text'], 'after breakfast');
+        });
+    }
+
+    public function test_duplicate_reminder_attempt_does_not_send_duplicate_slack_delivery(): void
+    {
+        config(['services.slack.webhook_url' => 'https://hooks.slack.test/medication']);
+        Http::fake([
+            'hooks.slack.test/*' => Http::response('ok', 200),
+        ]);
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        $this->travelToDubai('2026-06-23 08:31:00');
+
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        Http::assertSentCount(1);
+        $this->assertSame(1, MedicationDoseLog::firstOrFail()->reminder_attempts);
+        $this->assertDatabaseCount('medication_reminder_events', 4);
+        $this->assertSame(1, MedicationDoseLog::firstOrFail()->events()->where('event_type', 'slack_reminder_sent')->count());
     }
 
     public function test_quiet_hours_suppress_delivery_but_flag_overdue(): void

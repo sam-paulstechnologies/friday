@@ -12,6 +12,8 @@ use App\Notifications\TaskFlowNotification;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Throwable;
 
 class MedicationReminderService
 {
@@ -204,7 +206,10 @@ class MedicationReminderService
                 'preview_hidden' => (bool) $log->schedule->hide_details_in_notifications,
             ]);
 
-            return $log->fresh(['schedule']);
+            $freshLog = $log->fresh(['schedule']);
+            $this->sendSlackReminder($freshLog, $attempts);
+
+            return $freshLog;
         });
     }
 
@@ -384,6 +389,58 @@ class MedicationReminderService
         }
 
         return trim("{$schedule->label}: {$schedule->dosage_text} {$schedule->timing_note}. Open Miriam to confirm Taken, Snooze, or Skip.");
+    }
+
+    private function sendSlackReminder(MedicationDoseLog $log, int $attempt): void
+    {
+        $webhookUrl = config('services.slack.webhook_url');
+
+        if (! filled($webhookUrl)) {
+            $this->recordEvent($log, 'slack_reminder_skipped', 'slack', metadata: [
+                'attempt' => $attempt,
+                'reason' => 'webhook_missing',
+            ]);
+
+            return;
+        }
+
+        try {
+            $response = Http::asJson()
+                ->timeout(5)
+                ->post($webhookUrl, [
+                    'text' => $this->slackReminderMessage($log->schedule),
+                ]);
+
+            if ($response->successful()) {
+                $this->recordEvent($log, 'slack_reminder_sent', 'slack', metadata: [
+                    'attempt' => $attempt,
+                    'status' => $response->status(),
+                ]);
+
+                return;
+            }
+
+            $this->recordEvent($log, 'slack_reminder_failed', 'slack', metadata: [
+                'attempt' => $attempt,
+                'reason' => 'http_error',
+                'status' => $response->status(),
+            ]);
+        } catch (Throwable $exception) {
+            $this->recordEvent($log, 'slack_reminder_failed', 'slack', metadata: [
+                'attempt' => $attempt,
+                'reason' => 'exception',
+                'exception' => class_basename($exception),
+            ]);
+        }
+    }
+
+    private function slackReminderMessage(MedicationDoseSchedule $schedule): string
+    {
+        if ($schedule->hide_details_in_notifications) {
+            return 'Miriam medication reminder: a scheduled dose is due. Open Miriam to confirm Taken, Snooze, or Skip.';
+        }
+
+        return trim("Miriam medication reminder: {$schedule->label}: {$schedule->dosage_text} {$schedule->timing_note}. Open Miriam to confirm Taken, Snooze, or Skip.");
     }
 
     private function recordEvent(MedicationDoseLog $log, string $type, ?string $channel = null, ?string $device = null, array $metadata = []): void
