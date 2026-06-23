@@ -122,7 +122,7 @@ class MiriamReminderService
         }
 
         if (($capture['status'] ?? null) === 'needs_confirmation'
-            || collect($items)->contains(fn (array $item): bool => (float) $item['confidence'] < self::HIGH_CONFIDENCE || ! ($item['due_at'] ?? null))) {
+            || collect($items)->contains(fn (array $item): bool => (float) $item['confidence'] < self::HIGH_CONFIDENCE || blank($item['title'] ?? null) || ! ($item['due_at'] ?? null))) {
             $clarification = $this->createPendingClarification($items[0], $text, $slackUserId, $channelId, $messageTs, $user);
 
             return [
@@ -256,7 +256,7 @@ class MiriamReminderService
         $capture = $this->brain->interpretSlackCapture($resolvedText ?: $original, $user);
         $item = $capture['items'][0] ?? null;
 
-        if (! $item || ! ($item['due_at'] ?? null) || (float) ($item['confidence'] ?? 0) < self::HIGH_CONFIDENCE) {
+        if (! $item || blank($item['title'] ?? null) || ! ($item['due_at'] ?? null) || (float) ($item['confidence'] ?? 0) < self::HIGH_CONFIDENCE) {
             return null;
         }
 
@@ -314,6 +314,11 @@ class MiriamReminderService
             $channel,
             'I can save reminders like: Remind me to call Jasion in 5 minutes.'
         );
+    }
+
+    public function sendSlackMessage(?string $channel, string $text, array $blocks = []): array
+    {
+        return $this->sendSlack($channel, $text, $blocks);
     }
 
     public function sendDueReminders(?CarbonImmutable $now = null): int
@@ -432,6 +437,10 @@ class MiriamReminderService
 
     private function createFromParsedItem(array $item, string $slackUserId, string $channelId, ?string $messageTs, ?User $user): MiriamReminder
     {
+        if (blank($item['title'] ?? null) || blank($item['due_at'] ?? null)) {
+            throw new \InvalidArgumentException('Miriam reminders require a non-empty title and due_at.');
+        }
+
         $dueAt = $item['due_at'] instanceof CarbonImmutable
             ? $item['due_at']
             : CarbonImmutable::parse($item['due_at'], $item['timezone'] ?? self::DEFAULT_TIMEZONE);

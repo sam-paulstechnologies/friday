@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\MiriamReminder;
 use App\Models\User;
+use App\Services\Miriam\MiriamSlackConversationRouter;
 use App\Services\MiriamReminderService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,7 +12,7 @@ use Illuminate\Support\Facades\Log;
 
 class SlackEventsController extends Controller
 {
-    public function __invoke(Request $request, MiriamReminderService $reminders): JsonResponse
+    public function __invoke(Request $request, MiriamReminderService $reminders, MiriamSlackConversationRouter $router): JsonResponse
     {
         if ($request->input('type') === 'url_verification') {
             $this->auditSlackEvent($request, ignoredReason: 'url_verification');
@@ -67,16 +68,29 @@ class SlackEventsController extends Controller
             return response()->json(['ok' => true, 'ignored' => 'wrong_channel']);
         }
 
+        $user = $this->resolveUser();
+        $conversation = $router->route($text, $slackUser, $channel, $user);
+
+        if (($conversation['handled'] ?? false) && ($conversation['intent'] ?? null) !== 'answer_clarification') {
+            if (filled($conversation['text'] ?? null)) {
+                $reminders->sendSlackMessage($channel, (string) $conversation['text']);
+            }
+
+            $this->auditSlackEvent($request, parseResult: (string) ($conversation['intent'] ?? 'conversation_handled'));
+
+            return response()->json(['ok' => true, 'intent' => $conversation['intent'] ?? null]);
+        }
+
         $capture = $reminders->captureSmartFromSlack(
             $text,
             $slackUser,
             $channel,
             isset($event['ts']) ? (string) $event['ts'] : null,
-            $this->resolveUser()
+            $user
         );
 
         if ($capture['status'] === 'failed') {
-            $reminders->sendParseHelp($channel);
+            $reminders->sendSlackMessage($channel, 'I am not sure whether you want me to save something or show something. Try "show tomorrow agenda" or "remind me to call Sunny in 30 minutes."');
             $this->auditSlackEvent($request, ignoredReason: 'parse_failed', parseResult: 'failed');
 
             return response()->json(['ok' => true, 'ignored' => 'not_a_reminder']);
