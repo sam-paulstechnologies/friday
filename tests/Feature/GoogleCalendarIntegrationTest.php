@@ -93,6 +93,36 @@ class GoogleCalendarIntegrationTest extends TestCase
             );
     }
 
+    public function test_production_google_calendar_callback_alias_stores_connection(): void
+    {
+        [$user, $workspace] = $this->context('production-callback');
+        $this->enableGoogleCalendar();
+        Http::fake([
+            'https://oauth2.googleapis.com/token' => Http::response([
+                'access_token' => 'fixture-access-value',
+                'refresh_token' => 'fixture-refresh-value',
+                'expires_in' => 3600,
+                'scope' => 'https://www.googleapis.com/auth/calendar.events',
+                'provider_account_email' => 'calendar@example.com',
+            ]),
+        ]);
+
+        $this->actingAs($user)
+            ->withSession([
+                'google_calendar_oauth_state' => 'state-token',
+                'google_calendar_workspace_id' => $workspace->id,
+            ])
+            ->get(route('google.calendar.callback', ['code' => 'auth-code', 'state' => 'state-token']))
+            ->assertRedirect(route('settings.integrations.index'));
+
+        $this->assertDatabaseHas('calendar_connections', [
+            'user_id' => $user->id,
+            'provider' => 'google',
+            'provider_account_email' => 'calendar@example.com',
+            'is_active' => true,
+        ]);
+    }
+
     public function test_user_can_disconnect_own_calendar_connection(): void
     {
         [$user, $workspace] = $this->context('disconnect');

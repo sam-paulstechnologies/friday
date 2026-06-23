@@ -9,6 +9,7 @@ use App\Models\MedicationDoseSchedule;
 use App\Models\MedicationReminderEvent;
 use App\Models\User;
 use App\Notifications\TaskFlowNotification;
+use App\Services\Calendar\CalendarSyncService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +22,8 @@ class MedicationReminderService
     public const ACKNOWLEDGED_STATUSES = ['taken', 'skipped'];
     private const MORNING_DEADLINE_TIME = '10:00:00';
     private const CRITICAL_REPEAT_MINUTES = 5;
+
+    public function __construct(private readonly CalendarSyncService $calendarSyncService) {}
 
     public function configureDailyRoutine(User $user, string $breakfastTime, string $dinnerTime): Collection
     {
@@ -216,6 +219,7 @@ class MedicationReminderService
 
             $freshLog = $log->fresh(['schedule']);
             $this->sendSlackReminder($freshLog, $attempts, $escalationLevel);
+            $this->syncCalendarReminder($freshLog);
 
             return $freshLog;
         });
@@ -600,6 +604,23 @@ class MedicationReminderService
                 'exception' => class_basename($exception),
             ]);
         }
+    }
+
+    private function syncCalendarReminder(MedicationDoseLog $log): void
+    {
+        $result = $this->calendarSyncService->syncMedicationReminder($log);
+        $status = $result['status'] ?? 'skipped';
+
+        $this->recordEvent($log, match ($status) {
+            'created' => 'calendar_event_created',
+            'updated' => 'calendar_event_updated',
+            'failed' => 'calendar_event_failed',
+            default => 'calendar_event_skipped',
+        }, 'google_calendar', metadata: array_filter([
+            'provider_event_id' => $result['provider_event_id'] ?? null,
+            'reason' => $result['reason'] ?? null,
+            'exception' => $result['exception'] ?? null,
+        ], fn ($value) => $value !== null && $value !== ''));
     }
 
     private function slackReminderMessage(MedicationDoseSchedule $schedule, string $escalationLevel): string

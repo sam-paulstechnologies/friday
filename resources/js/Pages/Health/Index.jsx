@@ -1,13 +1,13 @@
 import HealthSummaryWidget from '@/Components/HealthSummaryWidget';
 import { Badge, EmptyState, Panel, PageSection, inputClass, primaryButton, secondaryButton } from '@/Components/Ui';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, router, useForm } from '@inertiajs/react';
+import { Head, Link, router, useForm } from '@inertiajs/react';
 import { useState } from 'react';
 
 const scoreOptions = [1, 2, 3, 4, 5];
 const focusOptions = ['cardio', 'strength', 'mobility', 'recovery', 'rest'];
 
-export default function Index({ health, medicationDoseStatus, medications, recentWorkouts }) {
+export default function Index({ health, medicationDoseStatus, medications, recentWorkouts, googleCalendar }) {
     return (
         <AuthenticatedLayout title="Health Discipline" subtitle="Sleep, gym readiness, medication confirmation, and practical workout logging.">
             <Head title="Health Discipline" />
@@ -20,7 +20,7 @@ export default function Index({ health, medicationDoseStatus, medications, recen
                         <HealthCheckForm health={health} />
                         <WorkoutLogCard health={health} recentWorkouts={recentWorkouts} />
                     </div>
-                    <MedicationCard medications={medications} medicationStatus={health.medication} doseStatus={medicationDoseStatus} />
+                    <MedicationCard medications={medications} medicationStatus={health.medication} doseStatus={medicationDoseStatus} googleCalendar={googleCalendar} />
                 </div>
             </div>
         </AuthenticatedLayout>
@@ -68,7 +68,7 @@ function HealthCheckForm({ health }) {
     );
 }
 
-function MedicationCard({ medications, medicationStatus, doseStatus }) {
+function MedicationCard({ medications, medicationStatus, doseStatus, googleCalendar }) {
     const [processingAction, setProcessingAction] = useState(null);
     const form = useForm({
         name: '',
@@ -121,8 +121,22 @@ function MedicationCard({ medications, medicationStatus, doseStatus }) {
     return (
         <Panel>
             <div className="border-b border-slate-200 px-4 py-3">
-                <h3 className="text-sm font-semibold text-slate-950">Medication</h3>
-                <p className="text-xs text-slate-500">Today&apos;s routine, reminders, acknowledgements, and audit history.</p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h3 className="text-sm font-semibold text-slate-950">Medication</h3>
+                        <p className="text-xs text-slate-500">Today&apos;s routine, reminders, acknowledgements, and audit history.</p>
+                    </div>
+                    {googleCalendar?.connected ? (
+                        <Badge tone="bg-emerald-50 text-emerald-700 ring-emerald-100">Google Calendar connected</Badge>
+                    ) : (
+                        <Link
+                            href={googleCalendar?.connect_url ?? route('settings.integrations.google.connect')}
+                            className={`${secondaryButton} ${!googleCalendar?.configured ? 'pointer-events-none opacity-50' : ''}`}
+                        >
+                            Connect Google Calendar
+                        </Link>
+                    )}
+                </div>
             </div>
             <div className="space-y-3 p-4">
                 {(doseStatus?.items ?? []).length > 0 && (

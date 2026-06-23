@@ -127,6 +127,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/settings/integrations', [IntegrationSettingsController::class, 'index'])->name('settings.integrations.index');
     Route::get('/settings/integrations/google/connect', [IntegrationSettingsController::class, 'connect'])->name('settings.integrations.google.connect');
     Route::get('/settings/integrations/google/callback', [IntegrationSettingsController::class, 'callback'])->name('settings.integrations.google.callback');
+    Route::get('/google/calendar/callback', [IntegrationSettingsController::class, 'callback'])->name('google.calendar.callback');
     Route::patch('/settings/integrations/google/{calendarConnection}/disconnect', [IntegrationSettingsController::class, 'disconnect'])->name('settings.integrations.google.disconnect');
     Route::post('/settings/integrations/google/sync', [IntegrationSettingsController::class, 'sync'])->name('settings.integrations.google.sync');
     Route::get('/settings/system-health', SystemHealthController::class)->name('settings.system-health.index');

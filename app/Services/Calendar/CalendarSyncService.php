@@ -5,6 +5,8 @@ namespace App\Services\Calendar;
 use App\Models\CalendarConnection;
 use App\Models\CalendarEventMapping;
 use App\Models\CalendarSyncLog;
+use App\Models\MedicationDoseLog;
+use App\Models\MedicationReminderEvent;
 use App\Models\Task;
 use App\Models\User;
 use Carbon\CarbonImmutable;
@@ -82,6 +84,61 @@ class CalendarSyncService
         }
     }
 
+    public function syncMedicationReminder(MedicationDoseLog $log): array
+    {
+        if (! $this->googleCalendarService->configured()) {
+            return ['status' => 'skipped', 'reason' => 'not_configured'];
+        }
+
+        $connection = CalendarConnection::query()
+            ->where('user_id', $log->user_id)
+            ->where('provider', 'google')
+            ->where('is_active', true)
+            ->latest()
+            ->first();
+
+        if (! $connection) {
+            return ['status' => 'skipped', 'reason' => 'not_connected'];
+        }
+
+        $existingProviderEventId = $this->existingMedicationProviderEventId($log);
+
+        try {
+            $event = $this->googleCalendarService->upsertMedicationReminderEvent($connection, $log->loadMissing('schedule'), $existingProviderEventId);
+
+            CalendarEventMapping::updateOrCreate(
+                [
+                    'user_id' => $connection->user_id,
+                    'provider' => 'google',
+                    'provider_event_id' => $event['id'],
+                ],
+                [
+                    'task_id' => null,
+                    'project_id' => null,
+                    'provider_calendar_id' => $event['organizer']['email'] ?? 'primary',
+                    'last_synced_at' => now(),
+                    'metadata' => $this->safeEventMetadata($event, [
+                        'source' => 'miriam_medication_reminder',
+                        'dose_log_id' => (string) $log->id,
+                        'dose_schedule_id' => (string) $log->dose_schedule_id,
+                        'scheduled_for' => $log->scheduled_for?->toIso8601String(),
+                    ]),
+                ],
+            );
+
+            return [
+                'status' => $existingProviderEventId ? 'updated' : 'created',
+                'provider_event_id' => $event['id'],
+            ];
+        } catch (Throwable $exception) {
+            return [
+                'status' => 'failed',
+                'reason' => 'exception',
+                'exception' => class_basename($exception),
+            ];
+        }
+    }
+
     public function externalEventsForUser(User $user, CarbonImmutable $start, CarbonImmutable $end): array
     {
         return CalendarEventMapping::query()
@@ -148,6 +205,17 @@ class CalendarSyncService
                     ],
                 );
             });
+    }
+
+    private function existingMedicationProviderEventId(MedicationDoseLog $log): ?string
+    {
+        return MedicationReminderEvent::query()
+            ->where('dose_log_id', $log->id)
+            ->whereIn('event_type', ['calendar_event_created', 'calendar_event_updated'])
+            ->latest('occurred_at')
+            ->get()
+            ->map(fn (MedicationReminderEvent $event) => $event->metadata['provider_event_id'] ?? null)
+            ->first(fn (?string $providerEventId) => filled($providerEventId));
     }
 
     private function eligibleTasks(CalendarConnection $connection): Collection

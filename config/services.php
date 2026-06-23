@@ -47,10 +47,10 @@ return [
     ],
 
     'google_calendar' => [
-        'enabled' => env('GOOGLE_CALENDAR_ENABLED', false),
-        'client_id' => env('GOOGLE_CALENDAR_CLIENT_ID'),
-        'client_secret' => env('GOOGLE_CALENDAR_CLIENT_SECRET'),
-        'redirect_uri' => env('GOOGLE_CALENDAR_REDIRECT_URI'),
+        'enabled' => env('GOOGLE_CALENDAR_ENABLED', filled(env('GOOGLE_CLIENT_ID')) && filled(env('GOOGLE_CLIENT_SECRET'))),
+        'client_id' => env('GOOGLE_CLIENT_ID', env('GOOGLE_CALENDAR_CLIENT_ID')),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET', env('GOOGLE_CALENDAR_CLIENT_SECRET')),
+        'redirect_uri' => env('GOOGLE_REDIRECT_URI', env('GOOGLE_CALENDAR_REDIRECT_URI', 'https://friday.paulstechnologies.com/google/calendar/callback')),
         'scopes' => [
             'https://www.googleapis.com/auth/calendar.events',
         ],

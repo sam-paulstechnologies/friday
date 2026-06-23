@@ -3,6 +3,7 @@
 namespace App\Services\Calendar;
 
 use App\Models\CalendarConnection;
+use App\Models\MedicationDoseLog;
 use App\Models\Task;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
@@ -105,6 +106,21 @@ class GoogleCalendarService
         return $response->json();
     }
 
+    public function upsertMedicationReminderEvent(CalendarConnection $connection, MedicationDoseLog $log, ?string $providerEventId = null): array
+    {
+        $connection = $this->refreshIfNeeded($connection);
+        $payload = $this->medicationReminderPayload($log->loadMissing('schedule'));
+        $calendarId = 'primary';
+
+        $response = $providerEventId
+            ? Http::withToken($connection->access_token)->patch("https://www.googleapis.com/calendar/v3/calendars/{$calendarId}/events/{$providerEventId}", $payload)
+            : Http::withToken($connection->access_token)->post("https://www.googleapis.com/calendar/v3/calendars/{$calendarId}/events", $payload);
+
+        $this->throwCleanlyWhenFailed($response, $providerEventId ? 'Google Calendar medication reminder update failed.' : 'Google Calendar medication reminder creation failed.');
+
+        return $response->json();
+    }
+
     public function pullEvents(CalendarConnection $connection, Carbon $start, Carbon $end): array
     {
         $connection = $this->refreshIfNeeded($connection);
@@ -139,6 +155,35 @@ class GoogleCalendarService
                 'private' => [
                     'miriam_task_id' => (string) $task->id,
                     'miriam_workspace_id' => (string) $task->workspace_id,
+                ],
+            ],
+        ];
+    }
+
+    private function medicationReminderPayload(MedicationDoseLog $log): array
+    {
+        $timezone = $log->scheduled_timezone ?: 'Asia/Dubai';
+        $start = $log->scheduled_for
+            ? Carbon::parse($log->scheduled_for)->setTimezone($timezone)
+            : now($timezone);
+        $end = $start->copy()->addMinutes(10);
+
+        return [
+            'summary' => 'Miriam medication reminder',
+            'description' => 'A scheduled dose is due. Open Miriam to confirm Taken, Snooze, or Skip.',
+            'start' => [
+                'dateTime' => $start->toRfc3339String(),
+                'timeZone' => $timezone,
+            ],
+            'end' => [
+                'dateTime' => $end->toRfc3339String(),
+                'timeZone' => $timezone,
+            ],
+            'extendedProperties' => [
+                'private' => [
+                    'miriam_source' => 'medication_reminder',
+                    'miriam_medication_dose_log_id' => (string) $log->id,
+                    'miriam_medication_dose_schedule_id' => (string) $log->dose_schedule_id,
                 ],
             ],
         ];

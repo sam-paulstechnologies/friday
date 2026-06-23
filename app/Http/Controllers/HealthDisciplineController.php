@@ -3,9 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\DailyHealthLog;
+use App\Models\CalendarConnection;
 use App\Models\Medication;
 use App\Models\MedicationDoseLog;
 use App\Models\WorkoutLog;
+use App\Services\Calendar\GoogleCalendarService;
 use App\Services\Health\HealthReadinessService;
 use App\Services\Health\HealthSummaryService;
 use App\Services\Health\MedicationReminderService;
@@ -18,13 +20,26 @@ use Inertia\Response;
 
 class HealthDisciplineController extends Controller
 {
-    public function index(Request $request, HealthSummaryService $summary, MedicationReminderService $reminders): Response
+    public function index(Request $request, HealthSummaryService $summary, MedicationReminderService $reminders, GoogleCalendarService $googleCalendarService): Response
     {
         $user = $request->user();
+        $calendarConnection = CalendarConnection::query()
+            ->where('user_id', $user->id)
+            ->where('provider', 'google')
+            ->where('is_active', true)
+            ->latest()
+            ->first();
 
         return Inertia::render('Health/Index', [
             'health' => $summary->forUser($user),
             'medicationDoseStatus' => $reminders->statusForUser($user),
+            'googleCalendar' => [
+                'enabled' => $googleCalendarService->enabled(),
+                'configured' => $googleCalendarService->configured(),
+                'connected' => (bool) $calendarConnection,
+                'connect_url' => route('settings.integrations.google.connect'),
+                'provider_account_email' => $calendarConnection?->provider_account_email,
+            ],
             'medications' => Medication::query()
                 ->where('user_id', $user->id)
                 ->where('active', true)

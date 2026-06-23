@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Models\MedicationDoseLog;
 use App\Models\MedicationDoseSchedule;
+use App\Models\CalendarConnection;
+use App\Models\CalendarEventMapping;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Services\Health\MedicationReminderService;
@@ -525,8 +527,98 @@ class MedicationReminderTest extends TestCase
 
         Http::assertSentCount(1);
         $this->assertSame(1, MedicationDoseLog::firstOrFail()->reminder_attempts);
-        $this->assertDatabaseCount('medication_reminder_events', 4);
+        $this->assertDatabaseCount('medication_reminder_events', 5);
         $this->assertSame(1, MedicationDoseLog::firstOrFail()->events()->where('event_type', 'slack_reminder_sent')->count());
+    }
+
+    public function test_medication_reminder_creates_private_google_calendar_event_when_connected(): void
+    {
+        [$user, $workspace] = $this->context();
+        $this->connection($user, $workspace);
+        $this->enableGoogleCalendar();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        Http::fake([
+            'https://www.googleapis.com/calendar/v3/calendars/primary/events' => Http::response([
+                'id' => 'google-med-dose-1',
+                'summary' => 'Miriam medication reminder',
+                'start' => ['dateTime' => '2026-06-23T08:30:00+04:00'],
+                'organizer' => ['email' => 'primary'],
+            ], 200),
+        ]);
+        $this->travelToDubai('2026-06-23 08:31:00');
+
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+
+            return $request->method() === 'POST'
+                && str_contains($request->url(), '/calendar/v3/calendars/primary/events')
+                && $payload['summary'] === 'Miriam medication reminder'
+                && $payload['description'] === 'A scheduled dose is due. Open Miriam to confirm Taken, Snooze, or Skip.'
+                && ! str_contains(json_encode($payload), '3 tablets')
+                && ! str_contains(json_encode($payload), 'after breakfast')
+                && ($payload['extendedProperties']['private']['miriam_source'] ?? null) === 'medication_reminder';
+        });
+        $this->assertDatabaseHas('calendar_event_mappings', [
+            'user_id' => $user->id,
+            'provider' => 'google',
+            'provider_event_id' => 'google-med-dose-1',
+        ]);
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'event_type' => 'calendar_event_created',
+            'channel' => 'google_calendar',
+        ]);
+    }
+
+    public function test_medication_reminder_falls_back_when_google_calendar_not_connected(): void
+    {
+        [$user] = $this->context();
+        $this->enableGoogleCalendar();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        Http::fake();
+        $this->travelToDubai('2026-06-23 08:31:00');
+
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        Http::assertNothingSent();
+        $this->assertSame(1, $user->notifications()->where('data->event_type', 'medication_reminder')->count());
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'event_type' => 'calendar_event_skipped',
+            'channel' => 'google_calendar',
+        ]);
+    }
+
+    public function test_repeated_medication_reminder_updates_existing_google_calendar_event(): void
+    {
+        [$user, $workspace] = $this->context();
+        $this->connection($user, $workspace);
+        $this->enableGoogleCalendar();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        Http::fake([
+            'https://www.googleapis.com/calendar/v3/calendars/primary/events' => Http::response([
+                'id' => 'google-med-dose-1',
+                'summary' => 'Miriam medication reminder',
+                'start' => ['dateTime' => '2026-06-23T08:30:00+04:00'],
+                'organizer' => ['email' => 'primary'],
+            ], 200),
+            'https://www.googleapis.com/calendar/v3/calendars/primary/events/google-med-dose-1' => Http::response([
+                'id' => 'google-med-dose-1',
+                'summary' => 'Miriam medication reminder',
+                'start' => ['dateTime' => '2026-06-23T08:30:00+04:00'],
+                'organizer' => ['email' => 'primary'],
+            ], 200),
+        ]);
+
+        $this->travelToDubai('2026-06-23 08:31:00');
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+        $this->travelToDubai('2026-06-23 08:46:00');
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        $this->assertSame(1, CalendarEventMapping::where('provider_event_id', 'google-med-dose-1')->count());
+        $this->assertDatabaseHas('medication_reminder_events', ['event_type' => 'calendar_event_created']);
+        $this->assertDatabaseHas('medication_reminder_events', ['event_type' => 'calendar_event_updated']);
+        Http::assertSentCount(2);
     }
 
     public function test_quiet_hours_suppress_delivery_but_flag_overdue(): void
@@ -593,6 +685,8 @@ class MedicationReminderTest extends TestCase
             ->assertInertia(fn ($page) => $page
                 ->where('medicationDoseStatus.items.0.label', 'Morning dose')
                 ->where('medicationDoseStatus.items.0.status', 'overdue')
+                ->where('googleCalendar.connected', false)
+                ->where('googleCalendar.connect_url', route('settings.integrations.google.connect'))
             );
     }
 
@@ -650,6 +744,31 @@ class MedicationReminderTest extends TestCase
             'hide_details_in_notifications' => true,
             'default_channel' => 'database',
         ], $overrides));
+    }
+
+    private function enableGoogleCalendar(): void
+    {
+        config([
+            'services.google_calendar.enabled' => true,
+            'services.google_calendar.client_id' => 'test-client-id',
+            'services.google_calendar.client_secret' => 'test-client-secret',
+            'services.google_calendar.redirect_uri' => 'https://friday.paulstechnologies.com/google/calendar/callback',
+        ]);
+    }
+
+    private function connection(User $user, Workspace $workspace): CalendarConnection
+    {
+        return CalendarConnection::create([
+            'user_id' => $user->id,
+            'workspace_id' => $workspace->id,
+            'provider' => 'google',
+            'provider_account_email' => $user->email,
+            'access_token' => 'fixture-access-value',
+            'refresh_token' => 'fixture-refresh-value',
+            'token_expires_at' => now()->addHour(),
+            'scopes' => ['https://www.googleapis.com/auth/calendar.events'],
+            'is_active' => true,
+        ]);
     }
 
     private function travelToDubai(string $dateTime): void
