@@ -32,20 +32,28 @@ class SmartSlackCaptureParser
         $time = $this->extractTime($lower, $now);
         $type = $this->itemType($lower);
         $title = $this->titleFor($normalized, $lower);
-        $confidence = $this->confidence($lower, $time !== null);
+        $confidence = $time['needs_clarification'] ?? false
+            ? 0.72
+            : $this->confidence($lower, $time['due_at'] !== null);
 
         if ($confidence < 0.35) {
             return null;
         }
 
-        return [
+        $item = [
             'title' => $title,
-            'due_at' => $time,
+            'due_at' => $time['due_at'],
             'type' => $type,
             'source' => 'slack',
             'original_text' => $normalized,
             'confidence' => $confidence,
         ];
+
+        if ($time['clarification'] ?? null) {
+            $item['clarification'] = $time['clarification'];
+        }
+
+        return $item;
     }
 
     private function segments(string $message): array
@@ -69,53 +77,63 @@ class SmartSlackCaptureParser
             ->toString());
     }
 
-    private function extractTime(string $lower, CarbonImmutable $now): ?CarbonImmutable
+    private function extractTime(string $lower, CarbonImmutable $now): array
     {
         if (preg_match('/\bin\s+(\d+)\s+minutes?\b/', $lower, $matches)) {
-            return $now->addMinutes(max(1, (int) $matches[1]));
+            return $this->timeResult($now->addMinutes(max(1, (int) $matches[1])));
         }
 
         if (preg_match('/\btomorrow\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/', $lower, $matches)) {
-            return $this->timeOn($now->addDay(), (int) $matches[1], (int) ($matches[2] ?? 0), $matches[3] ?? null);
+            if (! ($matches[3] ?? null)) {
+                return $this->clarificationResult('Do you mean tomorrow '.$matches[1].' AM or '.$matches[1].' PM?');
+            }
+
+            return $this->timeResult($this->ensureFuture(
+                $this->timeOn($now->addDay(), (int) $matches[1], (int) ($matches[2] ?? 0), $matches[3]),
+                $now,
+            ));
         }
 
         if (preg_match('/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/', $lower, $matches)) {
-            return $this->timeOn($now, (int) $matches[1], (int) ($matches[2] ?? 0), $matches[3] ?? null);
+            return $this->timeResult($this->ensureFuture(
+                $this->timeOn($now, (int) $matches[1], (int) ($matches[2] ?? 0), $matches[3] ?? null),
+                $now,
+            ));
         }
 
         if (str_contains($lower, 'tomorrow morning')) {
-            return $now->addDay()->setTime(9, 0);
+            return $this->timeResult($now->addDay()->setTime(9, 0));
         }
 
         if (str_contains($lower, 'tomorrow afternoon')) {
-            return $now->addDay()->setTime(15, 0);
+            return $this->timeResult($now->addDay()->setTime(15, 0));
         }
 
         if (str_contains($lower, 'tomorrow evening')) {
-            return $now->addDay()->setTime(19, 0);
+            return $this->timeResult($now->addDay()->setTime(19, 0));
         }
 
         if (str_contains($lower, 'tonight')) {
-            return $now->setTime(21, 0);
+            return $this->timeResult($this->tonightTime($now));
         }
 
         if (str_contains($lower, 'afternoon')) {
-            return $now->setTime(15, 0);
+            return $this->timeResult($this->ensureFuture($now->setTime(15, 0), $now));
         }
 
         if (str_contains($lower, 'evening')) {
-            return $now->setTime(19, 0);
+            return $this->timeResult($this->ensureFuture($now->setTime(19, 0), $now));
         }
 
         if (preg_match('/\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/', $lower, $matches)) {
-            return $now->next($matches[1])->setTime(9, 0);
+            return $this->timeResult($now->next($matches[1])->setTime(9, 0));
         }
 
         if (str_contains($lower, 'tomorrow')) {
-            return $now->addDay()->setTime(9, 0);
+            return $this->timeResult($now->addDay()->setTime(9, 0));
         }
 
-        return null;
+        return $this->timeResult(null);
     }
 
     private function timeOn(CarbonImmutable $date, int $hour, int $minute, ?string $meridiem): CarbonImmutable
@@ -133,6 +151,50 @@ class SmartSlackCaptureParser
         }
 
         return $date->setTime($hour, $minute);
+    }
+
+    private function tonightTime(CarbonImmutable $now): CarbonImmutable
+    {
+        if ($now->lt($now->setTime(20, 0))) {
+            return $now->setTime(21, 0);
+        }
+
+        return $this->roundUpToNextFiveMinutes($now->addMinutes(30));
+    }
+
+    private function roundUpToNextFiveMinutes(CarbonImmutable $time): CarbonImmutable
+    {
+        $minute = (int) $time->format('i');
+        $remainder = $minute % 5;
+
+        if ($remainder === 0 && (int) $time->format('s') === 0) {
+            return $time->setSecond(0);
+        }
+
+        return $time->addMinutes(5 - $remainder)->setSecond(0);
+    }
+
+    private function ensureFuture(CarbonImmutable $candidate, CarbonImmutable $now): CarbonImmutable
+    {
+        return $candidate->lte($now) ? $candidate->addDay() : $candidate;
+    }
+
+    private function timeResult(?CarbonImmutable $dueAt): array
+    {
+        return [
+            'due_at' => $dueAt,
+            'needs_clarification' => false,
+            'clarification' => null,
+        ];
+    }
+
+    private function clarificationResult(string $message): array
+    {
+        return [
+            'due_at' => null,
+            'needs_clarification' => true,
+            'clarification' => $message,
+        ];
     }
 
     private function itemType(string $lower): string

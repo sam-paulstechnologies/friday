@@ -105,17 +105,42 @@ class MiriamReminderTest extends TestCase
         $this->assertSame('2026-06-23 08:05:00', $reminder->due_at->format('Y-m-d H:i:s'));
     }
 
+    public function test_message_jasion_tomorrow_at_nine_asks_am_pm_clarification(): void
+    {
+        Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
+
+        $this->postSignedSlackEvent('Message Jasion tomorrow at 9 asking for his time')
+            ->assertOk()
+            ->assertJson(['needs_confirmation' => true]);
+
+        $this->assertDatabaseCount('miriam_reminders', 0);
+        Http::assertSent(fn ($request) => $request['text'] === 'Do you mean tomorrow 9 AM or 9 PM?');
+    }
+
     public function test_message_jasion_tomorrow_at_nine_creates_reminder(): void
     {
         Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
 
-        $this->postSignedSlackEvent('Message Jasion tomorrow at 9 asking for his time')->assertOk();
+        $this->postSignedSlackEvent('Message Jasion tomorrow at 9am asking for his time')->assertOk();
 
         $reminder = MiriamReminder::firstOrFail();
 
         $this->assertSame('Message Jasion asking for his time', $reminder->title);
         $this->assertSame('2026-06-24 05:00:00', $reminder->due_at->format('Y-m-d H:i:s'));
         Http::assertSent(fn ($request) => str_contains($request['text'], 'Tomorrow 9:00 AM — Message Jasion asking for his time'));
+    }
+
+    public function test_message_jasion_tomorrow_at_nine_pm_creates_reminder(): void
+    {
+        Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
+
+        $this->postSignedSlackEvent('Message Jasion tomorrow at 9pm asking for his time')->assertOk();
+
+        $reminder = MiriamReminder::firstOrFail();
+
+        $this->assertSame('Message Jasion asking for his time', $reminder->title);
+        $this->assertSame('2026-06-24 17:00:00', $reminder->due_at->format('Y-m-d H:i:s'));
+        Http::assertSent(fn ($request) => str_contains($request['text'], 'Tomorrow 9:00 PM'));
     }
 
     public function test_tonight_prepare_document_creates_document_task(): void
@@ -132,11 +157,38 @@ class MiriamReminderTest extends TestCase
         Http::assertSent(fn ($request) => str_contains($request['text'], 'Tonight 9:00 PM — Prepare a document'));
     }
 
+    public function test_tonight_before_eight_defaults_to_nine_pm_today(): void
+    {
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-06-23 19:30:00', 'Asia/Dubai'));
+        Carbon::setTestNow(Carbon::parse('2026-06-23 15:30:00', 'UTC'));
+        Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
+
+        $this->postSignedSlackEvent('Tonight prepare a document about Meta permissions')->assertOk();
+
+        $reminder = MiriamReminder::firstOrFail();
+
+        $this->assertSame('2026-06-23 17:00:00', $reminder->due_at->format('Y-m-d H:i:s'));
+    }
+
+    public function test_tonight_after_eight_uses_future_rounded_time(): void
+    {
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-06-23 21:38:00', 'Asia/Dubai'));
+        Carbon::setTestNow(Carbon::parse('2026-06-23 17:38:00', 'UTC'));
+        Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
+
+        $this->postSignedSlackEvent('Tonight prepare a document about Meta permissions')->assertOk();
+
+        $reminder = MiriamReminder::firstOrFail();
+
+        $this->assertSame('2026-06-23 18:10:00', $reminder->due_at->format('Y-m-d H:i:s'));
+        $this->assertTrue($reminder->due_at->gt(CarbonImmutable::now('UTC')));
+    }
+
     public function test_multi_line_message_creates_multiple_items(): void
     {
         Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
 
-        $this->postSignedSlackEvent("Message Jasion tomorrow at 9 asking for his time\nTonight prepare a document about Meta permissions")->assertOk();
+        $this->postSignedSlackEvent("Message Jasion tomorrow at 9am asking for his time\nTonight prepare a document about Meta permissions")->assertOk();
 
         $this->assertDatabaseCount('miriam_reminders', 2);
         $this->assertSame([
@@ -245,7 +297,7 @@ class MiriamReminderTest extends TestCase
             'slack.com/*' => Http::response(['ok' => true]),
         ]);
 
-        $this->postSignedSlackEvent('Message Jasion tomorrow at 9 asking for his time')->assertOk();
+        $this->postSignedSlackEvent('Message Jasion tomorrow at 9am asking for his time')->assertOk();
 
         $reminder = MiriamReminder::firstOrFail();
 
@@ -255,6 +307,44 @@ class MiriamReminderTest extends TestCase
             && $request['summary'] === 'Reminder: Message Jasion asking for his time'
             && $request['visibility'] === 'private'
             && $request['end']['dateTime'] === '2026-06-24T09:15:00+04:00');
+    }
+
+    public function test_no_reminder_or_calendar_event_is_created_in_the_past(): void
+    {
+        config([
+            'services.google_calendar.enabled' => true,
+            'services.google_calendar.client_id' => 'client',
+            'services.google_calendar.client_secret' => 'secret',
+            'services.google_calendar.redirect_uri' => 'https://example.test/callback',
+        ]);
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-06-23 21:38:00', 'Asia/Dubai'));
+        Carbon::setTestNow(Carbon::parse('2026-06-23 17:38:00', 'UTC'));
+
+        $user = User::factory()->create();
+        CalendarConnection::create([
+            'user_id' => $user->id,
+            'provider' => 'google',
+            'access_token' => 'access-token',
+            'refresh_token' => 'refresh-token',
+            'token_expires_at' => now()->addHour(),
+            'is_active' => true,
+        ]);
+
+        Http::fake([
+            'https://www.googleapis.com/calendar/v3/calendars/primary/events' => Http::response([
+                'id' => 'google-reminder-late',
+                'organizer' => ['email' => 'primary@example.test'],
+            ]),
+            'slack.com/*' => Http::response(['ok' => true]),
+        ]);
+
+        $this->postSignedSlackEvent('Tonight prepare a document about Meta permissions')->assertOk();
+
+        $reminder = MiriamReminder::firstOrFail();
+
+        $this->assertTrue($reminder->due_at->gt(CarbonImmutable::now('UTC')));
+        Http::assertSent(fn ($request) => $request->url() === 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+            && $request['start']['dateTime'] === '2026-06-23T22:10:00+04:00');
     }
 
     public function test_bot_messages_are_ignored_safely(): void

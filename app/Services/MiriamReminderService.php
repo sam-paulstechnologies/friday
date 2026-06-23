@@ -153,9 +153,14 @@ class MiriamReminderService
 
     public function sendClarification(string $channel, array $items): array
     {
+        $clarification = collect($items)
+            ->pluck('clarification')
+            ->filter()
+            ->first();
+
         return $this->sendSlack(
             $channel,
-            'I found '.count($items).' possible '.Str::plural('task', count($items)).'. Should I save them?'
+            $clarification ?: 'I found '.count($items).' possible '.Str::plural('task', count($items)).'. Should I save them?'
         );
     }
 
