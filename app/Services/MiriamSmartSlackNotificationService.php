@@ -60,22 +60,23 @@ class MiriamSmartSlackNotificationService
 
     public function notifyDevelopmentStarted(string $app, string $work, string $goal, ?int $jobId = null, ?int $phaseId = null): array
     {
-        return $this->notify('development_started', "Development started: {$app} - {$work}. Goal: {$goal}. Details will be stored in Miriam.", [
+        return $this->notify('development_started', 'Development started', [
             'app' => $app,
             'job_id' => $jobId,
             'phase' => $phaseId ?: 'none',
             'status' => 'started',
-        ]);
+        ], $this->developmentStartedBlocks($app, $goal));
     }
 
-    public function notifyDevelopmentCompleted(string $app, string $table, ?int $jobId = null, ?string $status = null, array $context = []): array
+    public function notifyDevelopmentCompleted(string $app, array $summary, ?int $jobId = null, ?int $phaseId = null, array $context = []): array
     {
-        return $this->notify('development_completed', $table, array_merge([
+        return $this->notify('development_completed', 'Development completed', array_merge([
             'app' => $app,
             'job_id' => $jobId,
-            'status' => $status ?: 'completed',
-            'summary_hash' => sha1($table),
-        ], $context));
+            'phase' => $phaseId ?: 'none',
+            'status' => (string) ($summary['status'] ?? 'completed'),
+            'summary_hash' => sha1(json_encode($summary)),
+        ], $context), $this->developmentCompletedBlocks($summary));
     }
 
     public function notifyDevelopmentSummary(string $app, string $summary, ?int $jobId = null, ?string $status = null, array $context = []): array
@@ -127,5 +128,62 @@ class MiriamSmartSlackNotificationService
             $context['summary_hash'] ?? 'none',
             $context['notification_dedupe_key'] ?? 'none',
         ]));
+    }
+
+    private function developmentStartedBlocks(string $app, string $goal): array
+    {
+        return [
+            [
+                'type' => 'header',
+                'text' => ['type' => 'plain_text', 'text' => 'Development started'],
+            ],
+            [
+                'type' => 'section',
+                'fields' => [
+                    $this->field('App', $app),
+                    $this->field('Goal', $goal),
+                    $this->field('Started at', now()->toDateTimeString()),
+                    $this->field('Details', 'Stored in Miriam DB'),
+                ],
+            ],
+        ];
+    }
+
+    private function developmentCompletedBlocks(array $summary): array
+    {
+        return [
+            [
+                'type' => 'header',
+                'text' => ['type' => 'plain_text', 'text' => 'Development completed'],
+            ],
+            [
+                'type' => 'section',
+                'fields' => [
+                    $this->field('App', (string) ($summary['app'] ?? 'Miriam')),
+                    $this->field('Work done', (string) ($summary['work_done'] ?? '-')),
+                    $this->field('Status', (string) ($summary['status'] ?? '-')),
+                    $this->field('Commit', (string) ($summary['commit'] ?? '-')),
+                    $this->field('Tests', (string) ($summary['tests'] ?? '-')),
+                    $this->field('Deployment', (string) ($summary['deployment'] ?? '-')),
+                    $this->field('Next', (string) ($summary['next'] ?? '-')),
+                ],
+            ],
+            [
+                'type' => 'context',
+                'elements' => [
+                    ['type' => 'mrkdwn', 'text' => 'Full details stored in Miriam Development Ledger.'],
+                ],
+            ],
+        ];
+    }
+
+    private function field(string $label, string $value): array
+    {
+        $clean = (string) str(trim(str_replace(["\r", "\n", '|'], [' ', ' ', '/'], $value)) ?: '-')->limit(180);
+
+        return [
+            'type' => 'mrkdwn',
+            'text' => "*{$label}*\n{$clean}",
+        ];
     }
 }

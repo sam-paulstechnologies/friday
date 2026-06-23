@@ -228,15 +228,13 @@ class MiriamDevelopmentLedgerService
             return ['sent' => false, 'reason' => 'empty_completion_signal_suppressed'];
         }
 
-        $key = $ledger->notification_dedupe_key ?: $this->notificationDedupeKey(
+        $key = $this->completedNotificationDedupeKey(
             $ledger->app_id,
             $ledger->job_id,
             $ledger->phase_id,
-            $ledger->status,
-            $ledger->summary ?: ''
         );
 
-        if (! $ledger->notification_dedupe_key) {
+        if ($ledger->notification_dedupe_key !== $key) {
             $ledger->forceFill(['notification_dedupe_key' => $key])->save();
         }
 
@@ -250,15 +248,14 @@ class MiriamDevelopmentLedgerService
             return ['sent' => false, 'reason' => 'durable_duplicate_suppressed'];
         }
 
-        $summary = $this->completedTableText($ledger);
+        $summary = $this->completionCardSummary($ledger);
         $response = app(MiriamSmartSlackNotificationService::class)->notifyDevelopmentCompleted(
             $ledger->app_name ?: 'Miriam',
             $summary,
             $ledger->job_id,
-            $ledger->status,
+            $ledger->phase_id,
             [
-                'phase' => $ledger->phase_id ?: 'none',
-                'summary_hash' => sha1($ledger->summary ?: ''),
+                'summary_hash' => sha1($key),
                 'notification_dedupe_key' => $key,
             ]
         );
@@ -553,6 +550,16 @@ class MiriamDevelopmentLedgerService
         ]));
     }
 
+    public function completedNotificationDedupeKey(?int $appId, ?int $jobId, ?int $phaseId): string
+    {
+        return sha1(implode(':', [
+            'completed',
+            $appId ?: 'none',
+            $jobId ?: 'none',
+            $phaseId ?: 'none',
+        ]));
+    }
+
     public function startedNotificationDedupeKey(?int $appId, ?int $jobId, ?int $phaseId): string
     {
         return sha1(implode(':', [
@@ -565,8 +572,29 @@ class MiriamDevelopmentLedgerService
 
     public function compactLedgerTableText(?string $slug = null, int $limit = 10): string
     {
+        $rows = $this->compactLedgerRows($slug, $limit);
+
+        if ($rows === []) {
+            return 'No ledger activity recorded.';
+        }
+
+        return collect($rows)
+            ->map(fn (array $row) => implode('; ', [
+                'App: '.$row[0],
+                'Work done: '.$row[1],
+                'Status: '.$row[2],
+                'Commit: '.$row[3],
+                'Tests: '.$row[4],
+                'Deployment: '.$row[5],
+                'Next: '.$row[6],
+            ]))
+            ->implode("\n");
+    }
+
+    public function compactLedgerRows(?string $slug = null, int $limit = 10): array
+    {
         if (! Schema::hasTable('miriam_development_ledgers')) {
-            return 'Development ledger table is not installed yet. Run migrations.';
+            return [];
         }
 
         $app = null;
@@ -581,10 +609,18 @@ class MiriamDevelopmentLedgerService
             ->get();
 
         if ($ledgers->isEmpty()) {
-            return "| App | Work Done | Status | Commit | Tests | Deployment | Next |\n| --- | --------- | ------ | ------ | ----- | ---------- | ---- |\n| Miriam | No ledger activity recorded | planned | - | - | - | - |";
+            return [];
         }
 
-        return $this->compactLedgerTable($ledgers);
+        return $ledgers->map(fn (MiriamDevelopmentLedger $ledger) => [
+            $this->shortSlackCell($ledger->app_name ?: 'Miriam'),
+            $this->shortSlackCell($ledger->summary ?: $ledger->phase_name ?: 'Completed work'),
+            $this->shortSlackCell($ledger->status ?: 'completed'),
+            $this->shortSlackCell($ledger->commit_hash ? substr($ledger->commit_hash, 0, 12) : '-'),
+            $this->shortSlackCell($this->testsCell($ledger)),
+            $this->shortSlackCell($ledger->deployment_status ?: '-'),
+            $this->shortSlackCell($ledger->next_action ?: '-'),
+        ])->values()->all();
     }
 
     private function completedTableText(MiriamDevelopmentLedger $ledger): string
@@ -592,19 +628,45 @@ class MiriamDevelopmentLedgerService
         return $this->compactLedgerTable(collect([$ledger]));
     }
 
+    private function completionCardSummary(MiriamDevelopmentLedger $ledger): array
+    {
+        return [
+            'app' => $ledger->app_name ?: 'Miriam',
+            'work_done' => $this->shortSlackCell($ledger->summary ?: $ledger->phase_name ?: 'Completed work'),
+            'status' => $this->shortSlackCell($ledger->status ?: 'completed'),
+            'commit' => $this->shortSlackCell($ledger->commit_hash ? substr($ledger->commit_hash, 0, 12) : '-'),
+            'tests' => $this->shortSlackCell($this->testsCell($ledger)),
+            'deployment' => $this->shortSlackCell($ledger->deployment_status ?: '-'),
+            'next' => $this->shortSlackCell($ledger->next_action ?: '-'),
+        ];
+    }
+
     private function compactLedgerTable(Collection $ledgers): string
     {
-        $rows = $ledgers->map(fn (MiriamDevelopmentLedger $ledger) => implode(' | ', [
-            '| '.$this->shortSlackCell($ledger->app_name ?: 'Miriam'),
+        return collect($this->compactLedgerRowsFromCollection($ledgers))
+            ->map(fn (array $row) => implode('; ', [
+                'App: '.$row[0],
+                'Work done: '.$row[1],
+                'Status: '.$row[2],
+                'Commit: '.$row[3],
+                'Tests: '.$row[4],
+                'Deployment: '.$row[5],
+                'Next: '.$row[6],
+            ]))
+            ->implode("\n");
+    }
+
+    private function compactLedgerRowsFromCollection(Collection $ledgers): array
+    {
+        return $ledgers->map(fn (MiriamDevelopmentLedger $ledger) => [
+            $this->shortSlackCell($ledger->app_name ?: 'Miriam'),
             $this->shortSlackCell($ledger->summary ?: $ledger->phase_name ?: 'Completed work'),
             $this->shortSlackCell($ledger->status ?: 'completed'),
             $this->shortSlackCell($ledger->commit_hash ? substr($ledger->commit_hash, 0, 12) : '-'),
             $this->shortSlackCell($this->testsCell($ledger)),
             $this->shortSlackCell($ledger->deployment_status ?: '-'),
-            $this->shortSlackCell($ledger->next_action ?: '-').' |',
-        ]))->implode("\n");
-
-        return "| App | Work Done | Status | Commit | Tests | Deployment | Next |\n| --- | --------- | ------ | ------ | ----- | ---------- | ---- |\n{$rows}";
+            $this->shortSlackCell($ledger->next_action ?: '-'),
+        ])->values()->all();
     }
 
     private function hasCompletionSignal(MiriamDevelopmentLedger $ledger): bool

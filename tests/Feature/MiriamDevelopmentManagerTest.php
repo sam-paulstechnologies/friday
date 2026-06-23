@@ -954,7 +954,9 @@ class MiriamDevelopmentManagerTest extends TestCase
             'status' => 'completed',
             'test_result' => 'passed',
         ]);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), '| App | Work Done | Status | Commit | Tests | Deployment | Next |')
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development completed')
+            && str_contains((string) $request->body(), 'Full details stored in Miriam Development Ledger.')
+            && ! str_contains((string) $request->body(), '| App |')
             && ! str_contains((string) $request->body(), 'mra_approval_notice')
             && ! str_contains((string) $request->body(), 'xoxb-test'));
         Http::assertNotSent(fn ($request) => str_contains((string) $request->body(), 'Miriam Development Manager needs approval'));
@@ -1016,7 +1018,8 @@ class MiriamDevelopmentManagerTest extends TestCase
             $this->onePhasePayload()
         );
 
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), '| App | Work Done | Status | Commit | Tests | Deployment | Next |')
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development completed')
+            && ! str_contains((string) $request->body(), '| App |')
             && ! str_contains((string) $request->body(), 'mra_do_not_leak_this_token')
             && ! str_contains((string) $request->body(), 'token_hash')
             && ! str_contains((string) $request->body(), 'xoxb-test'));
@@ -1618,14 +1621,26 @@ class MiriamDevelopmentManagerTest extends TestCase
         $service = app(MiriamSmartSlackNotificationService::class);
         $service->notifyDevelopmentStarted('ChurchForce', 'QA', 'Run validation.', 10, 20);
         $service->notifyDevelopmentStarted('ChurchForce', 'QA', 'Run validation.', 10, 20);
-        $service->notifyDevelopmentCompleted('ChurchForce', "| App | Work Done | Status | Commit | Tests | Deployment | Next |\n| --- | --------- | ------ | ------ | ----- | ---------- | ---- |\n| ChurchForce | QA complete | completed | abc123 | php artisan test | not_deployed | Review |", 10, 'completed');
+        $service->notifyDevelopmentCompleted('ChurchForce', [
+            'app' => 'ChurchForce',
+            'work_done' => 'QA complete',
+            'status' => 'completed',
+            'commit' => 'abc123',
+            'tests' => 'php artisan test',
+            'deployment' => 'not_deployed',
+            'next' => 'Review',
+        ], 10, 20);
         $service->notifyPhasePassed('ChurchForce', 'QA', 10);
         $service->notifyQueueCompleted('ChurchForce and CatererHQ queues finished.', 'churchforce', 10);
         $service->notify('validation_command', 'php artisan test line output', ['app' => 'churchforce']);
 
         Http::assertSentCount(2);
-        Http::assertSent(fn ($request) => str_contains((string) (json_decode((string) $request->body(), true)['text'] ?? ''), 'Development started: ChurchForce'));
-        Http::assertSent(fn ($request) => str_contains((string) (json_decode((string) $request->body(), true)['text'] ?? ''), '| App | Work Done | Status | Commit | Tests | Deployment | Next |'));
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development started')
+            && str_contains((string) $request->body(), 'ChurchForce')
+            && str_contains((string) $request->body(), 'Stored in Miriam DB'));
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development completed')
+            && str_contains((string) $request->body(), 'Full details stored in Miriam Development Ledger.')
+            && ! str_contains((string) $request->body(), '| App |'));
     }
 
     public function test_blocked_development_notifications_are_sent_once(): void
@@ -1724,7 +1739,10 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->assertSame('durable_started_duplicate_suppressed', $second['reason']);
         $this->assertNotNull($ledger->fresh()->started_notified_at);
         Http::assertSentCount(1);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development started: Miriam Product Build'));
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development started')
+            && str_contains((string) $request->body(), 'Miriam Product Build')
+            && str_contains((string) $request->body(), 'Stored in Miriam DB')
+            && ! str_contains((string) $request->body(), '| App |'));
     }
 
     public function test_completed_ledger_summary_notifies_once_with_durable_dedupe_key(): void
@@ -1744,19 +1762,28 @@ class MiriamDevelopmentManagerTest extends TestCase
         ];
         $first = $ledgerService->recordJob($job->fresh(), 'completed', 'Completed the same phase summary.', $phaseRun, $meta);
         $second = $ledgerService->recordJob($job->fresh(), 'completed', 'Completed the same phase summary.', $phaseRun, $meta);
+        $third = $ledgerService->recordJob($job->fresh(), 'completed', 'Completed a different phase summary.', $phaseRun, $meta);
 
         $firstResult = $ledgerService->notifySummaryIfNeeded($first);
         Cache::flush();
         $secondResult = $ledgerService->notifySummaryIfNeeded($second);
+        Cache::flush();
+        $thirdResult = $ledgerService->notifySummaryIfNeeded($third);
 
         $this->assertTrue($firstResult['sent']);
         $this->assertFalse($secondResult['sent']);
         $this->assertSame('durable_duplicate_suppressed', $secondResult['reason']);
+        $this->assertFalse($thirdResult['sent']);
+        $this->assertSame('durable_duplicate_suppressed', $thirdResult['reason']);
         $this->assertSame($first->fresh()->notification_dedupe_key, $second->fresh()->notification_dedupe_key);
+        $this->assertSame($first->fresh()->notification_dedupe_key, $third->fresh()->notification_dedupe_key);
         $this->assertNotNull($first->fresh()->summary_notified_at);
         $this->assertNull($second->fresh()->summary_notified_at);
+        $this->assertNull($third->fresh()->summary_notified_at);
         Http::assertSentCount(1);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), '| App | Work Done | Status | Commit | Tests | Deployment | Next |')
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development completed')
+            && str_contains((string) $request->body(), 'Full details stored in Miriam Development Ledger.')
+            && ! str_contains((string) $request->body(), '| App |')
             && ! str_contains((string) $request->body(), 'Changed: none recorded')
             && ! str_contains((string) $request->body(), 'Commit: none recorded')
             && ! str_contains((string) $request->body(), 'app/Example.php'));
@@ -1865,7 +1892,7 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->artisan('miriam:dev:summary', ['--app' => 'churchforce'])
             ->expectsOutputToContain('Miriam Development Manager summary')
             ->expectsOutputToContain('Ledger records: 1')
-            ->expectsOutputToContain('| App | Work Done | Status | Commit | Tests | Deployment | Next |')
+            ->expectsOutputToContain('Work Done')
             ->expectsOutputToContain('ChurchForce demo polish completed.')
             ->expectsOutputToContain('Create manual release package.')
             ->assertExitCode(0);

@@ -80,7 +80,13 @@ class MiriamDevelopmentSummary extends Command
         }
 
         $this->line('');
-        $this->line($ledger->compactLedgerTableText(is_string($appSlug) && $appSlug !== '' ? $appSlug : null));
+        $rows = $ledger->compactLedgerRows(is_string($appSlug) && $appSlug !== '' ? $appSlug : null);
+
+        if ($rows === []) {
+            $this->line('No ledger activity recorded.');
+        } else {
+            $this->table(['App', 'Work Done', 'Status', 'Commit', 'Tests', 'Deployment', 'Next'], $rows);
+        }
 
         return self::SUCCESS;
     }
