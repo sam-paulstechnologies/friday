@@ -12,16 +12,16 @@ class SlackEventsController extends Controller
 {
     public function __invoke(Request $request, MiriamReminderService $reminders): JsonResponse
     {
+        if ($request->input('type') === 'url_verification') {
+            return response()->json(['challenge' => $request->input('challenge')]);
+        }
+
         if (! $this->hasValidSlackSignature($request)) {
             return response()->json(['error' => 'Invalid Slack signature.'], 401);
         }
 
         if ($this->payloadJson($request) !== null) {
             return $this->handleAction($request, $reminders);
-        }
-
-        if ($request->input('type') === 'url_verification') {
-            return response()->json(['challenge' => $request->input('challenge')]);
         }
 
         if ($request->header('X-Slack-Retry-Num') !== null) {

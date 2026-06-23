@@ -18,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->validateCsrfTokens(except: [
             'webhooks/slack/events',
+            'slack/events',
             'slack/medication/actions',
         ]);
     })

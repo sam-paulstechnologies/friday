@@ -55,6 +55,16 @@ class MiriamReminderTest extends TestCase
         $this->assertSame('2026-06-23 12:30:00', $relative['due_at']->format('Y-m-d H:i:s'));
     }
 
+    public function test_slack_url_verification_returns_challenge_without_csrf_or_auth(): void
+    {
+        $this->postJson(route('slack.events'), [
+            'type' => 'url_verification',
+            'challenge' => 'challenge-value',
+        ])
+            ->assertOk()
+            ->assertJson(['challenge' => 'challenge-value']);
+    }
+
     public function test_slack_event_stores_reminder_and_sends_confirmation(): void
     {
         User::factory()->create();
