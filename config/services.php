@@ -32,6 +32,7 @@ return [
         'bot_token' => env('SLACK_BOT_TOKEN'),
         'signing_secret' => env('SLACK_SIGNING_SECRET'),
         'default_channel' => env('SLACK_DEFAULT_CHANNEL'),
+        'miriam_channel_id' => env('SLACK_MIRIAM_CHANNEL_ID'),
         'webhook_url' => env('SLACK_WEBHOOK_URL'),
         'allowed_user_id' => env('SLACK_ALLOWED_USER_ID'),
         'notifications' => [

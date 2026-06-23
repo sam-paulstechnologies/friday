@@ -649,28 +649,42 @@ class MedicationReminderService
 
     private function sendSlackReminder(MedicationDoseLog $log, int $attempt, string $escalationLevel): void
     {
+        $botToken = config('services.slack.bot_token');
+        $miriamChannel = config('services.slack.miriam_channel_id') ?: env('SLACK_MIRIAM_CHANNEL_ID');
         $webhookUrl = config('services.slack.webhook_url');
+        $canUseMiriamBot = filled($botToken) && filled($miriamChannel);
 
-        if (! filled($webhookUrl)) {
+        if (! $canUseMiriamBot && ! filled($webhookUrl)) {
             $this->recordEvent($log, 'slack_reminder_skipped', 'slack', metadata: [
                 'attempt' => $attempt,
                 'escalation_level' => $escalationLevel,
-                'reason' => 'webhook_missing',
+                'reason' => 'slack_missing',
             ]);
 
             return;
         }
 
         try {
-            $response = Http::asJson()
-                ->timeout(5)
-                ->post($webhookUrl, $this->slackReminderPayload($log, $escalationLevel));
+            $payload = $this->slackReminderPayload($log, $escalationLevel);
+            $response = $canUseMiriamBot
+                ? Http::withToken($botToken)
+                    ->acceptJson()
+                    ->timeout(5)
+                    ->post('https://slack.com/api/chat.postMessage', $payload + ['channel' => $miriamChannel])
+                : Http::asJson()
+                    ->timeout(5)
+                    ->post($webhookUrl, $payload);
 
-            if ($response->successful()) {
+            $slackOk = $canUseMiriamBot
+                ? (bool) ($response->json('ok') ?? false)
+                : $response->successful();
+
+            if ($slackOk) {
                 $this->recordEvent($log, 'slack_reminder_sent', 'slack', metadata: [
                     'attempt' => $attempt,
                     'escalation_level' => $escalationLevel,
                     'status' => $response->status(),
+                    'channel' => $canUseMiriamBot ? 'miriam' : 'webhook',
                 ]);
 
                 return;
@@ -681,6 +695,7 @@ class MedicationReminderService
                 'escalation_level' => $escalationLevel,
                 'reason' => 'http_error',
                 'status' => $response->status(),
+                'slack_error' => $response->json('error') ?? null,
             ]);
         } catch (Throwable $exception) {
             $this->recordEvent($log, 'slack_reminder_failed', 'slack', metadata: [

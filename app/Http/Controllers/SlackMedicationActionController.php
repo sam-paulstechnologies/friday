@@ -3,14 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\Models\MedicationDoseLog;
+use App\Models\MiriamReminder;
 use App\Services\Health\MedicationReminderService;
+use App\Services\MiriamReminderService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Throwable;
 
 class SlackMedicationActionController extends Controller
 {
-    public function __invoke(Request $request, MedicationReminderService $reminders): JsonResponse
+    public function __invoke(Request $request, MedicationReminderService $reminders, MiriamReminderService $miriamReminders): JsonResponse
     {
         if (! $this->hasValidSlackSignature($request)) {
             return response()->json(['error' => 'Invalid Slack signature.'], 401);
@@ -20,6 +22,10 @@ class SlackMedicationActionController extends Controller
         $action = data_get($payload, 'actions.0.action_id');
         $doseLogId = data_get($payload, 'actions.0.value');
         $slackUser = data_get($payload, 'user.id');
+
+        if (is_string($action) && str_starts_with($action, 'miriam_reminder_')) {
+            return $this->handleMiriamReminderAction($action, (int) $doseLogId, $miriamReminders, (string) $slackUser);
+        }
 
         /** @var MedicationDoseLog|null $log */
         $log = MedicationDoseLog::query()->with('schedule')->find($doseLogId);
@@ -93,6 +99,36 @@ class SlackMedicationActionController extends Controller
         ]);
 
         return $this->slackResponse($message);
+    }
+
+    private function handleMiriamReminderAction(string $action, int $reminderId, MiriamReminderService $reminders, string $slackUser): JsonResponse
+    {
+        /** @var MiriamReminder|null $reminder */
+        $reminder = MiriamReminder::query()->find($reminderId);
+
+        if (! $reminder) {
+            return $this->slackResponse('I could not find that reminder.');
+        }
+
+        if ($action === 'miriam_reminder_done') {
+            $reminders->markDone($reminder, $slackUser);
+
+            return $this->slackResponse('Done. I marked that reminder complete.');
+        }
+
+        if ($action === 'miriam_reminder_snooze_15') {
+            $reminders->snooze($reminder, $slackUser, 15);
+
+            return $this->slackResponse('Snoozed for 15 minutes.');
+        }
+
+        if ($action === 'miriam_reminder_cancel') {
+            $reminders->cancel($reminder, $slackUser);
+
+            return $this->slackResponse('Cancelled.');
+        }
+
+        return $this->slackResponse('Unknown Miriam reminder action.');
     }
 
     private function slackResponse(string $text): JsonResponse
