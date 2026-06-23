@@ -27,6 +27,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
@@ -1766,6 +1767,119 @@ class MiriamDevelopmentManagerTest extends TestCase
             'development_job_id' => $job->id,
             'event_type' => 'stale_approval_notice_archived',
         ]);
+    }
+
+    public function test_stale_approval_archive_command_is_safe_when_job_table_is_missing(): void
+    {
+        Schema::shouldReceive('hasTable')
+            ->andReturnUsing(fn (string $table): bool => $table !== 'miriam_development_jobs');
+
+        $this->artisan('miriam:dev:archive-stale-approvals')
+            ->expectsOutputToContain('miriam_development_jobs table is missing')
+            ->expectsOutputToContain('Job gates and audit history were preserved.')
+            ->assertExitCode(0);
+    }
+
+    public function test_development_summary_command_is_safe_when_ledger_table_is_missing(): void
+    {
+        Schema::shouldReceive('hasTable')
+            ->andReturnUsing(fn (string $table): bool => $table !== 'miriam_development_ledgers');
+
+        $this->artisan('miriam:dev:summary')
+            ->expectsOutputToContain('Miriam Development Manager summary')
+            ->expectsOutputToContain('miriam_development_ledgers')
+            ->expectsOutputToContain('Ledger: not installed.')
+            ->assertExitCode(0);
+    }
+
+    public function test_development_summary_command_outputs_ledger_activity(): void
+    {
+        $app = MiriamManagedApp::create([
+            'name' => 'ChurchForce',
+            'slug' => 'churchforce',
+            'status' => 'active',
+        ]);
+
+        MiriamDevelopmentLedger::create([
+            'app_id' => $app->id,
+            'app_name' => $app->name,
+            'status' => 'completed',
+            'summary' => 'ChurchForce demo polish completed.',
+            'test_result' => 'passed',
+            'next_action' => 'Create manual release package.',
+            'completed_at' => now(),
+        ]);
+
+        $this->artisan('miriam:dev:summary', ['--app' => 'churchforce'])
+            ->expectsOutputToContain('Miriam Development Manager summary')
+            ->expectsOutputToContain('Ledger records: 1')
+            ->expectsOutputToContain('ChurchForce demo polish completed.')
+            ->expectsOutputToContain('Create manual release package.')
+            ->assertExitCode(0);
+    }
+
+    public function test_app_vision_sync_command_writes_idempotent_ledger_rows(): void
+    {
+        $app = MiriamManagedApp::create([
+            'name' => 'CatererHQ',
+            'slug' => 'catererhq',
+            'status' => 'active',
+            'notes' => 'CatererHQ demo-ready vision',
+            'config_json' => json_encode([
+                'development_focus' => [
+                    'next_action' => 'Run final demo QA.',
+                ],
+            ]),
+        ]);
+
+        $this->artisan('miriam:sync-app-visions')
+            ->expectsOutputToContain('Synced 1 app vision record')
+            ->assertExitCode(0);
+
+        $this->artisan('miriam:sync-app-visions')->assertExitCode(0);
+
+        $this->assertSame(1, MiriamDevelopmentLedger::where('app_id', $app->id)
+            ->where('summary', 'App vision synced for CatererHQ.')
+            ->count());
+        $this->assertDatabaseHas('miriam_development_ledgers', [
+            'app_id' => $app->id,
+            'master_vision_reference' => 'CatererHQ demo-ready vision',
+            'next_action' => 'Run final demo QA.',
+        ]);
+    }
+
+    public function test_ingest_summary_command_is_idempotent_and_does_not_notify_slack(): void
+    {
+        $this->seedSlackContext();
+        Http::fake();
+        $app = MiriamManagedApp::create([
+            'name' => 'ChurchForce',
+            'slug' => 'churchforce',
+            'status' => 'active',
+        ]);
+
+        $payload = [
+            '--app' => 'churchforce',
+            '--job-id' => 100,
+            '--phase-id' => 200,
+            '--summary' => 'Ingested command center summary.',
+            '--file' => ['app/Example.php'],
+            '--test' => ['php artisan test'],
+            '--test-result' => 'passed',
+            '--commit' => 'abc1234',
+            '--next' => 'Review in dashboard.',
+        ];
+
+        $this->artisan('miriam:dev:ingest-summary', $payload)
+            ->expectsOutputToContain('Ingested Miriam development ledger summary')
+            ->expectsOutputToContain('Slack notification was not sent')
+            ->assertExitCode(0);
+        $this->artisan('miriam:dev:ingest-summary', $payload)->assertExitCode(0);
+
+        $this->assertSame(1, MiriamDevelopmentLedger::where('app_id', $app->id)
+            ->where('summary', 'Ingested command center summary.')
+            ->count());
+        Http::assertNothingSent();
     }
 
     public function test_quiet_development_mode_suppresses_normal_approval_cards(): void

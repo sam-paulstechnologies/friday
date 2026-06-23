@@ -9,6 +9,8 @@ use App\Models\MiriamDevelopmentPhaseRun;
 use App\Models\MiriamManagedApp;
 use App\Models\MiriamPromptPhase;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class MiriamDevelopmentLedgerService
 {
@@ -79,6 +81,10 @@ class MiriamDevelopmentLedgerService
 
     public function dashboard(): array
     {
+        if (! Schema::hasTable('miriam_managed_apps') || ! Schema::hasTable('miriam_development_ledgers')) {
+            return [];
+        }
+
         return MiriamManagedApp::query()
             ->with(['promptProgram.phases' => fn ($query) => $query->orderBy('sort_order')])
             ->orderBy('name')
@@ -122,6 +128,14 @@ class MiriamDevelopmentLedgerService
 
     public function developmentSummaryText(?string $slug = null): string
     {
+        if (! Schema::hasTable('miriam_development_ledgers')) {
+            return "*Miriam development update*\nDevelopment ledger table is not installed yet. Run migrations.";
+        }
+
+        if ($slug && ! Schema::hasTable('miriam_managed_apps')) {
+            return "*Miriam development update*\nManaged app table is not installed yet. Run migrations.";
+        }
+
         $app = $slug ? MiriamManagedApp::where('slug', $slug)->first() : null;
         $ledgers = MiriamDevelopmentLedger::query()
             ->when($app, fn ($query) => $query->where('app_id', $app->id))
@@ -207,6 +221,10 @@ class MiriamDevelopmentLedgerService
 
     public function blockersText(): string
     {
+        if (! Schema::hasTable('miriam_development_ledgers')) {
+            return "Miriam development ledger table is not installed yet. Run migrations.";
+        }
+
         $blockers = MiriamDevelopmentLedger::query()
             ->whereIn('status', ['blocked', 'failed', 'needs_human'])
             ->latest()
@@ -224,6 +242,10 @@ class MiriamDevelopmentLedgerService
 
     public function nextText(): string
     {
+        if (! Schema::hasTable('miriam_development_ledgers')) {
+            return "Miriam development ledger table is not installed yet. Run migrations.";
+        }
+
         $next = MiriamDevelopmentLedger::query()
             ->whereNotNull('next_action')
             ->latest()
@@ -241,6 +263,10 @@ class MiriamDevelopmentLedgerService
 
     public function completedTodayText(): string
     {
+        if (! Schema::hasTable('miriam_development_ledgers')) {
+            return "Miriam development ledger table is not installed yet. Run migrations.";
+        }
+
         $completed = MiriamDevelopmentLedger::query()
             ->where('status', 'completed')
             ->whereDate('completed_at', now()->toDateString())
@@ -259,8 +285,24 @@ class MiriamDevelopmentLedgerService
 
     public function archiveStaleApprovalNotices(int $olderThanHours = 24, bool $dryRun = false): array
     {
-        $jobs = MiriamDevelopmentJob::query()
-            ->with(['events'])
+        if (! Schema::hasTable('miriam_development_jobs')) {
+            return [
+                'archived' => 0,
+                'dry_run' => $dryRun,
+                'skipped_reason' => 'miriam_development_jobs table is missing. Run migrations before archiving stale approval notices.',
+            ];
+        }
+
+        if (! Schema::hasTable('miriam_development_job_events')) {
+            return [
+                'archived' => 0,
+                'dry_run' => $dryRun,
+                'skipped_reason' => 'miriam_development_job_events table is missing. Run migrations before archiving stale approval notices.',
+            ];
+        }
+
+        $jobs = DB::table('miriam_development_jobs')
+            ->select(['id'])
             ->whereIn('status', ['waiting_for_approval', 'waiting_for_manual_fix'])
             ->where('updated_at', '<=', now()->subHours($olderThanHours))
             ->get();
@@ -268,23 +310,29 @@ class MiriamDevelopmentLedgerService
         $archived = 0;
 
         foreach ($jobs as $job) {
-            if ($job->events->contains('event_type', 'stale_approval_notice_archived')) {
+            if (DB::table('miriam_development_job_events')
+                ->where('development_job_id', $job->id)
+                ->where('event_type', 'stale_approval_notice_archived')
+                ->exists()) {
                 continue;
             }
 
             $archived++;
 
             if (! $dryRun) {
-                $job->events()->create([
+                DB::table('miriam_development_job_events')->insert([
+                    'development_job_id' => $job->id,
                     'event_type' => 'stale_approval_notice_archived',
                     'title' => 'Stale approval/manual-fix notice archived',
                     'body' => 'Slack notice was archived from active attention. Job gate and audit history were not changed.',
                     'meta_json' => json_encode(['older_than_hours' => $olderThanHours], JSON_PRETTY_PRINT),
+                    'created_at' => now(),
+                    'updated_at' => now(),
                 ]);
             }
         }
 
-        return ['archived' => $archived, 'dry_run' => $dryRun];
+        return ['archived' => $archived, 'dry_run' => $dryRun, 'skipped_reason' => null];
     }
 
     public function quietModeEnabledAt(): \Illuminate\Support\Carbon
@@ -381,6 +429,10 @@ class MiriamDevelopmentLedgerService
             return true;
         }
 
+        if (! Schema::hasTable('miriam_development_failures')) {
+            return false;
+        }
+
         return MiriamDevelopmentFailure::query()
             ->where('development_job_id', $job->id)
             ->where(function ($query): void {
@@ -439,7 +491,7 @@ class MiriamDevelopmentLedgerService
         return implode(', ', array_slice($files, 0, 5)).(count($files) > 5 ? ' +' . (count($files) - 5).' more' : '');
     }
 
-    private function notificationDedupeKey(?int $appId, ?int $jobId, ?int $phaseId, string $status, string $summary): string
+    public function notificationDedupeKey(?int $appId, ?int $jobId, ?int $phaseId, string $status, string $summary): string
     {
         return sha1(implode(':', [
             $appId ?: 'none',

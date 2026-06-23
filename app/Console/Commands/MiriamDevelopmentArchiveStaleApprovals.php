@@ -16,6 +16,13 @@ class MiriamDevelopmentArchiveStaleApprovals extends Command
         $hours = max(1, (int) $this->option('older-than-hours'));
         $result = $ledger->archiveStaleApprovalNotices($hours, (bool) $this->option('dry-run'));
 
+        if ($result['skipped_reason'] ?? null) {
+            $this->warn($result['skipped_reason']);
+            $this->line('Job gates and audit history were preserved.');
+
+            return self::SUCCESS;
+        }
+
         $prefix = $result['dry_run'] ? 'Would archive' : 'Archived';
         $this->info("{$prefix} {$result['archived']} stale Miriam approval/manual-fix notice(s).");
         $this->line('Job gates and audit history were preserved.');
