@@ -11,8 +11,10 @@ class MiriamReminder extends Model
     protected $fillable = [
         'user_id',
         'category',
+        'item_type',
         'title',
         'timezone',
+        'confidence',
         'due_at',
         'status',
         'reminder_attempts',
@@ -23,6 +25,7 @@ class MiriamReminder extends Model
         'slack_user_id',
         'slack_channel_id',
         'source_message_ts',
+        'google_calendar_event_id',
         'metadata',
     ];
 
@@ -30,6 +33,7 @@ class MiriamReminder extends Model
     {
         return [
             'due_at' => 'datetime',
+            'confidence' => 'decimal:2',
             'last_sent_at' => 'datetime',
             'next_reminder_at' => 'datetime',
             'completed_at' => 'datetime',

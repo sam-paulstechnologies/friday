@@ -4,13 +4,21 @@ namespace App\Services;
 
 use App\Models\MiriamReminder;
 use App\Models\User;
+use App\Services\Calendar\CalendarSyncService;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 class MiriamReminderService
 {
     public const DEFAULT_TIMEZONE = 'Asia/Dubai';
+    private const HIGH_CONFIDENCE = 0.8;
+
+    public function __construct(
+        private readonly SmartSlackCaptureParser $smartParser,
+        private readonly CalendarSyncService $calendarSyncService,
+    ) {}
 
     public function parse(string $text, ?CarbonImmutable $now = null): ?array
     {
@@ -88,29 +96,36 @@ class MiriamReminderService
             }
         }
 
-        $reminder = MiriamReminder::create([
-            'user_id' => $user?->id,
-            'category' => $parsed['category'],
-            'title' => $parsed['title'],
-            'timezone' => $parsed['timezone'],
-            'due_at' => $parsed['due_at']->utc(),
-            'status' => 'pending',
-            'next_reminder_at' => $parsed['due_at']->utc(),
-            'slack_user_id' => $slackUserId,
-            'slack_channel_id' => $channelId,
-            'source_message_ts' => $messageTs,
-            'metadata' => [
-                'source' => 'slack_event',
-                'original_text' => $text,
-            ],
-        ]);
+        return $this->createFromParsedItem($parsed + [
+            'type' => 'reminder',
+            'source' => 'slack',
+            'original_text' => $text,
+            'confidence' => 1.0,
+        ], $slackUserId, $channelId, $messageTs, $user);
+    }
 
-        $this->recordEvent($reminder, 'captured', 'slack', [
-            'slack_user_id' => $slackUserId,
-            'source_message_ts' => $messageTs,
-        ]);
+    public function captureSmartFromSlack(string $text, string $slackUserId, string $channelId, ?string $messageTs = null, ?User $user = null): array
+    {
+        $items = $this->smartParser->parse($text);
 
-        return $reminder;
+        if ($items === []) {
+            return ['status' => 'failed', 'items' => [], 'reminders' => collect()];
+        }
+
+        if (collect($items)->contains(fn (array $item): bool => (float) $item['confidence'] < self::HIGH_CONFIDENCE)) {
+            return ['status' => 'needs_confirmation', 'items' => $items, 'reminders' => collect()];
+        }
+
+        $reminders = collect($items)
+            ->map(fn (array $item, int $index): MiriamReminder => $this->createFromParsedItem(
+                $item,
+                $slackUserId,
+                $channelId,
+                $messageTs ? "{$messageTs}:{$index}" : null,
+                $user,
+            ));
+
+        return ['status' => 'created', 'items' => $items, 'reminders' => $reminders];
     }
 
     public function sendConfirmation(MiriamReminder $reminder): array
@@ -122,6 +137,25 @@ class MiriamReminderService
                 $reminder->title,
                 $reminder->due_at->setTimezone($reminder->timezone)->format('M j, g:i A')
             )
+        );
+    }
+
+    public function sendCaptureSummary(string $channel, Collection $reminders): array
+    {
+        $lines = $reminders->values()->map(function (MiriamReminder $reminder, int $index): string {
+            $when = $this->summaryTime($reminder);
+
+            return ($index + 1).". {$when} — {$reminder->title}";
+        })->implode("\n");
+
+        return $this->sendSlack($channel, "Captured {$reminders->count()} ".Str::plural('item', $reminders->count()).":\n{$lines}");
+    }
+
+    public function sendClarification(string $channel, array $items): array
+    {
+        return $this->sendSlack(
+            $channel,
+            'I found '.count($items).' possible '.Str::plural('task', count($items)).'. Should I save them?'
         );
     }
 
@@ -245,6 +279,59 @@ class MiriamReminderService
             'occurred_at' => CarbonImmutable::now('UTC'),
             'metadata' => array_filter($metadata, fn ($value) => $value !== null && $value !== ''),
         ]);
+    }
+
+    private function createFromParsedItem(array $item, string $slackUserId, string $channelId, ?string $messageTs, ?User $user): MiriamReminder
+    {
+        $dueAt = $item['due_at'] instanceof CarbonImmutable
+            ? $item['due_at']
+            : CarbonImmutable::parse($item['due_at'], $item['timezone'] ?? self::DEFAULT_TIMEZONE);
+
+        $reminder = MiriamReminder::create([
+            'user_id' => $user?->id,
+            'category' => $this->categoryFor($item['title']),
+            'item_type' => $item['type'] ?? 'reminder',
+            'title' => $item['title'],
+            'timezone' => $item['timezone'] ?? self::DEFAULT_TIMEZONE,
+            'confidence' => $item['confidence'] ?? 1,
+            'due_at' => $dueAt->utc(),
+            'status' => 'pending',
+            'next_reminder_at' => $dueAt->utc(),
+            'slack_user_id' => $slackUserId,
+            'slack_channel_id' => $channelId,
+            'source_message_ts' => $messageTs,
+            'metadata' => [
+                'source' => $item['source'] ?? 'slack',
+                'original_text' => $item['original_text'] ?? null,
+            ],
+        ]);
+
+        $this->recordEvent($reminder, 'captured', 'slack', [
+            'slack_user_id' => $slackUserId,
+            'source_message_ts' => $messageTs,
+            'item_type' => $reminder->item_type,
+            'confidence' => $reminder->confidence,
+        ]);
+
+        $this->calendarSyncService->syncMiriamReminder($reminder);
+
+        return $reminder->fresh() ?: $reminder;
+    }
+
+    private function summaryTime(MiriamReminder $reminder): string
+    {
+        $local = $reminder->due_at->setTimezone($reminder->timezone);
+        $today = CarbonImmutable::now($reminder->timezone)->toDateString();
+
+        if ($local->toDateString() === $today && $local->format('H:i') === '21:00') {
+            return 'Tonight '.$local->format('g:i A');
+        }
+
+        if ($local->toDateString() === CarbonImmutable::now($reminder->timezone)->addDay()->toDateString()) {
+            return 'Tomorrow '.$local->format('g:i A');
+        }
+
+        return $local->format('M j, g:i A');
     }
 
     private function handleDoneAction(MiriamReminder $reminder, string $slackUserId): string

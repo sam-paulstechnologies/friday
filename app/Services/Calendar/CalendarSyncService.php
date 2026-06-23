@@ -7,6 +7,7 @@ use App\Models\CalendarEventMapping;
 use App\Models\CalendarSyncLog;
 use App\Models\MedicationDoseLog;
 use App\Models\MedicationReminderEvent;
+use App\Models\MiriamReminder;
 use App\Models\Task;
 use App\Models\User;
 use Carbon\CarbonImmutable;
@@ -136,6 +137,73 @@ class CalendarSyncService
                 'reason' => 'exception',
                 'exception' => class_basename($exception),
             ];
+        }
+    }
+
+    public function syncMiriamReminder(MiriamReminder $reminder): array
+    {
+        if (! $this->googleCalendarService->configured()) {
+            return ['status' => 'skipped', 'reason' => 'not_configured'];
+        }
+
+        if (! $reminder->user_id || ! $reminder->due_at) {
+            return ['status' => 'skipped', 'reason' => 'missing_user_or_time'];
+        }
+
+        $connection = CalendarConnection::query()
+            ->where('user_id', $reminder->user_id)
+            ->where('provider', 'google')
+            ->where('is_active', true)
+            ->latest()
+            ->first();
+
+        if (! $connection) {
+            return ['status' => 'skipped', 'reason' => 'not_connected'];
+        }
+
+        try {
+            $event = $this->googleCalendarService->upsertMiriamReminderEvent($connection, $reminder, $reminder->google_calendar_event_id);
+
+            $reminder->forceFill(['google_calendar_event_id' => $event['id'] ?? $reminder->google_calendar_event_id])->save();
+
+            CalendarEventMapping::updateOrCreate(
+                [
+                    'user_id' => $connection->user_id,
+                    'provider' => 'google',
+                    'provider_event_id' => $event['id'],
+                ],
+                [
+                    'task_id' => null,
+                    'project_id' => null,
+                    'provider_calendar_id' => $event['organizer']['email'] ?? 'primary',
+                    'last_synced_at' => now(),
+                    'metadata' => $this->safeEventMetadata($event, [
+                        'source' => 'miriam_general_reminder',
+                        'miriam_reminder_id' => (string) $reminder->id,
+                    ]),
+                ],
+            );
+
+            $reminder->events()->create([
+                'event_type' => $reminder->wasChanged('google_calendar_event_id') ? 'calendar_event_created' : 'calendar_event_updated',
+                'channel' => 'google_calendar',
+                'occurred_at' => CarbonImmutable::now('UTC'),
+                'metadata' => ['provider_event_id' => $event['id'] ?? null],
+            ]);
+
+            return [
+                'status' => $reminder->wasChanged('google_calendar_event_id') ? 'created' : 'updated',
+                'provider_event_id' => $event['id'] ?? null,
+            ];
+        } catch (Throwable $exception) {
+            $reminder->events()->create([
+                'event_type' => 'calendar_event_failed',
+                'channel' => 'google_calendar',
+                'occurred_at' => CarbonImmutable::now('UTC'),
+                'metadata' => ['exception' => class_basename($exception)],
+            ]);
+
+            return ['status' => 'failed', 'reason' => 'exception', 'exception' => class_basename($exception)];
         }
     }
 

@@ -4,6 +4,7 @@ namespace App\Services\Calendar;
 
 use App\Models\CalendarConnection;
 use App\Models\MedicationDoseLog;
+use App\Models\MiriamReminder;
 use App\Models\Task;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
@@ -121,6 +122,21 @@ class GoogleCalendarService
         return $response->json();
     }
 
+    public function upsertMiriamReminderEvent(CalendarConnection $connection, MiriamReminder $reminder, ?string $providerEventId = null): array
+    {
+        $connection = $this->refreshIfNeeded($connection);
+        $payload = $this->miriamReminderPayload($reminder);
+        $calendarId = 'primary';
+
+        $response = $providerEventId
+            ? Http::withToken($connection->access_token)->patch("https://www.googleapis.com/calendar/v3/calendars/{$calendarId}/events/{$providerEventId}", $payload)
+            : Http::withToken($connection->access_token)->post("https://www.googleapis.com/calendar/v3/calendars/{$calendarId}/events", $payload);
+
+        $this->throwCleanlyWhenFailed($response, $providerEventId ? 'Google Calendar reminder update failed.' : 'Google Calendar reminder creation failed.');
+
+        return $response->json();
+    }
+
     public function pullEvents(CalendarConnection $connection, Carbon $start, Carbon $end): array
     {
         $connection = $this->refreshIfNeeded($connection);
@@ -185,6 +201,33 @@ class GoogleCalendarService
                     'miriam_source' => 'medication_reminder',
                     'miriam_medication_dose_log_id' => (string) $log->id,
                     'miriam_medication_dose_schedule_id' => (string) $log->dose_schedule_id,
+                ],
+            ],
+        ];
+    }
+
+    private function miriamReminderPayload(MiriamReminder $reminder): array
+    {
+        $timezone = $reminder->timezone ?: 'Asia/Dubai';
+        $start = Carbon::parse($reminder->due_at)->setTimezone($timezone);
+        $end = $start->copy()->addMinutes(15);
+
+        return [
+            'summary' => 'Reminder: '.$reminder->title,
+            'description' => 'Captured by Miriam from Slack.',
+            'visibility' => 'private',
+            'start' => [
+                'dateTime' => $start->toRfc3339String(),
+                'timeZone' => $timezone,
+            ],
+            'end' => [
+                'dateTime' => $end->toRfc3339String(),
+                'timeZone' => $timezone,
+            ],
+            'extendedProperties' => [
+                'private' => [
+                    'miriam_source' => 'general_reminder',
+                    'miriam_reminder_id' => (string) $reminder->id,
                 ],
             ],
         ];

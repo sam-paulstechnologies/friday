@@ -67,7 +67,7 @@ class SlackEventsController extends Controller
             return response()->json(['ok' => true, 'ignored' => 'wrong_channel']);
         }
 
-        $reminder = $reminders->captureFromSlack(
+        $capture = $reminders->captureSmartFromSlack(
             $text,
             $slackUser,
             $channel,
@@ -75,15 +75,22 @@ class SlackEventsController extends Controller
             $this->resolveUser()
         );
 
-        if (! $reminder) {
+        if ($capture['status'] === 'failed') {
             $reminders->sendParseHelp($channel);
             $this->auditSlackEvent($request, ignoredReason: 'parse_failed', parseResult: 'failed');
 
             return response()->json(['ok' => true, 'ignored' => 'not_a_reminder']);
         }
 
-        $reminders->sendConfirmation($reminder);
-        $this->auditSlackEvent($request, parseResult: 'reminder_created', reminderId: $reminder->id);
+        if ($capture['status'] === 'needs_confirmation') {
+            $reminders->sendClarification($channel, $capture['items']);
+            $this->auditSlackEvent($request, ignoredReason: 'low_confidence', parseResult: 'needs_confirmation');
+
+            return response()->json(['ok' => true, 'needs_confirmation' => true]);
+        }
+
+        $reminders->sendCaptureSummary($channel, $capture['reminders']);
+        $this->auditSlackEvent($request, parseResult: 'reminders_created', reminderId: $capture['reminders']->first()?->id);
 
         return response()->json(['ok' => true]);
     }
@@ -184,7 +191,7 @@ class SlackEventsController extends Controller
         $configured = env('TASKFLOW_DAILY_USER_ID');
 
         if ($configured) {
-            return User::query()->find($configured);
+            return User::query()->find($configured) ?: User::query()->orderBy('id')->first();
         }
 
         return User::query()->orderBy('id')->first();
