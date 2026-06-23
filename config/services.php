@@ -47,6 +47,13 @@ return [
         'model_planner' => env('OPENAI_MODEL_PLANNER', 'gpt-5.4-mini'),
     ],
 
+    'miriam_ai' => [
+        'enabled' => env('MIRIAM_AI_ENABLED', false),
+        'api_key' => env('OPENAI_API_KEY'),
+        'model' => env('MIRIAM_AI_MODEL', 'gpt-5.4-mini'),
+        'reasoning_effort' => env('MIRIAM_AI_REASONING_EFFORT', 'low'),
+    ],
+
     'google_calendar' => [
         'enabled' => env('GOOGLE_CALENDAR_ENABLED', filled(env('GOOGLE_CLIENT_ID')) && filled(env('GOOGLE_CLIENT_SECRET'))),
         'client_id' => env('GOOGLE_CLIENT_ID', env('GOOGLE_CALENDAR_CLIENT_ID')),

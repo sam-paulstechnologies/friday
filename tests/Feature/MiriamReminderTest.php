@@ -7,6 +7,7 @@ use App\Models\MedicationDoseSchedule;
 use App\Models\CalendarConnection;
 use App\Models\CalendarEventMapping;
 use App\Models\MiriamReminder;
+use App\Models\MiriamSlackClarification;
 use App\Models\User;
 use App\Services\MiriamReminderService;
 use Carbon\Carbon;
@@ -114,7 +115,25 @@ class MiriamReminderTest extends TestCase
             ->assertJson(['needs_confirmation' => true]);
 
         $this->assertDatabaseCount('miriam_reminders', 0);
+        $this->assertDatabaseCount('miriam_slack_clarifications', 1);
         Http::assertSent(fn ($request) => $request['text'] === 'Do you mean tomorrow 9 AM or 9 PM?');
+    }
+
+    public function test_am_resolves_previous_clarification(): void
+    {
+        Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
+
+        $this->postSignedSlackEvent('Message Jasion tomorrow at 9 asking for his time')->assertOk();
+        $this->postSignedSlackEvent('AM', ['event' => ['ts' => '1710000001.000100']])->assertOk();
+
+        $reminder = MiriamReminder::firstOrFail();
+
+        $this->assertSame('Message Jasion asking for his time', $reminder->title);
+        $this->assertSame('2026-06-24 05:00:00', $reminder->due_at->format('Y-m-d H:i:s'));
+        $this->assertSame('resolved', MiriamSlackClarification::firstOrFail()->status);
+        $this->assertTrue($reminder->events()->where('event_type', 'clarification_created')->exists());
+        $this->assertTrue($reminder->events()->where('event_type', 'clarification_resolved')->exists());
+        Http::assertSent(fn ($request) => str_contains($request['text'], 'Tomorrow 9:00 AM'));
     }
 
     public function test_message_jasion_tomorrow_at_nine_creates_reminder(): void
@@ -250,7 +269,8 @@ class MiriamReminderTest extends TestCase
             ->assertJson(['ignored' => 'not_a_reminder']);
 
         $this->assertDatabaseCount('miriam_reminders', 0);
-        Http::assertSent(fn ($request) => $request['channel'] === 'CMIRIAM'
+        Http::assertSent(fn ($request) => $request->url() === 'https://slack.com/api/chat.postMessage'
+            && $request['channel'] === 'CMIRIAM'
             && $request['text'] === 'I can save reminders like: Remind me to call Jasion in 5 minutes.');
     }
 
@@ -264,6 +284,70 @@ class MiriamReminderTest extends TestCase
 
         $this->assertDatabaseCount('miriam_reminders', 0);
         Http::assertSent(fn ($request) => $request['text'] === 'I found 1 possible task. Should I save them?');
+    }
+
+    public function test_openai_failure_falls_back_gracefully(): void
+    {
+        config([
+            'services.miriam_ai.enabled' => true,
+            'services.miriam_ai.api_key' => 'test-openai-key',
+            'services.miriam_ai.model' => 'gpt-5.4-mini',
+        ]);
+
+        Http::fake([
+            'https://api.openai.com/v1/responses' => Http::response(['error' => ['message' => 'nope']], 500),
+            'slack.com/*' => Http::response(['ok' => true]),
+        ]);
+
+        $this->postSignedSlackEvent('please remember Jasion sometime')->assertOk()
+            ->assertJson(['ignored' => 'not_a_reminder']);
+
+        $this->assertDatabaseCount('miriam_reminders', 0);
+        Http::assertSent(fn ($request) => $request->url() === 'https://slack.com/api/chat.postMessage'
+            && $request['channel'] === 'CMIRIAM'
+            && $request['text'] === 'I can save reminders like: Remind me to call Jasion in 5 minutes.');
+    }
+
+    public function test_openai_fallback_can_create_reminder_with_audit_events(): void
+    {
+        config([
+            'services.miriam_ai.enabled' => true,
+            'services.miriam_ai.api_key' => 'test-openai-key',
+            'services.miriam_ai.model' => 'gpt-5.4-mini',
+            'services.miriam_ai.reasoning_effort' => 'low',
+        ]);
+
+        Http::fake([
+            'https://api.openai.com/v1/responses' => Http::response([
+                'output_text' => json_encode([
+                    'intent' => 'create_task',
+                    'title' => 'Review Smart Matrix permissions',
+                    'description' => 'Review Meta WABA permission requirements.',
+                    'due_at_local' => '2026-06-24 09:00:00',
+                    'timezone' => 'Asia/Dubai',
+                    'confidence' => 0.91,
+                    'needs_clarification' => false,
+                    'clarification_question' => null,
+                    'risk_level' => 'low',
+                    'should_create_calendar_event' => true,
+                ]),
+            ]),
+            'slack.com/*' => Http::response(['ok' => true]),
+        ]);
+
+        $this->postSignedSlackEvent('Could you make sure I review Smart Matrix permissions tomorrow morning')->assertOk();
+
+        $reminder = MiriamReminder::firstOrFail();
+
+        $this->assertSame('Review Smart Matrix permissions', $reminder->title);
+        $this->assertSame('task', $reminder->item_type);
+        $this->assertSame('2026-06-24 05:00:00', $reminder->due_at->format('Y-m-d H:i:s'));
+        $this->assertTrue($reminder->events()->where('event_type', 'ai_request_created')->exists());
+        $this->assertTrue($reminder->events()->where('event_type', 'ai_response_received')->exists());
+        $this->assertTrue($reminder->events()->where('event_type', 'reminder_created_from_ai')->exists());
+        Http::assertSent(fn ($request) => $request->url() === 'https://api.openai.com/v1/responses'
+            && $request['model'] === 'gpt-5.4-mini'
+            && $request['text']['format']['type'] === 'json_schema');
     }
 
     public function test_google_calendar_event_created_when_connected(): void

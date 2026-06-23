@@ -3,8 +3,10 @@
 namespace App\Services;
 
 use App\Models\MiriamReminder;
+use App\Models\MiriamSlackClarification;
 use App\Models\User;
 use App\Services\Calendar\CalendarSyncService;
+use App\Services\Miriam\MiriamBrainService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
@@ -13,10 +15,10 @@ use Illuminate\Support\Str;
 class MiriamReminderService
 {
     public const DEFAULT_TIMEZONE = 'Asia/Dubai';
-    private const HIGH_CONFIDENCE = 0.8;
+    private const HIGH_CONFIDENCE = 0.75;
 
     public function __construct(
-        private readonly SmartSlackCaptureParser $smartParser,
+        private readonly MiriamBrainService $brain,
         private readonly CalendarSyncService $calendarSyncService,
     ) {}
 
@@ -106,26 +108,56 @@ class MiriamReminderService
 
     public function captureSmartFromSlack(string $text, string $slackUserId, string $channelId, ?string $messageTs = null, ?User $user = null): array
     {
-        $items = $this->smartParser->parse($text);
+        $resolved = $this->resolvePendingClarification($text, $slackUserId, $channelId, $messageTs, $user);
 
-        if ($items === []) {
-            return ['status' => 'failed', 'items' => [], 'reminders' => collect()];
+        if ($resolved !== null) {
+            return $resolved;
         }
 
-        if (collect($items)->contains(fn (array $item): bool => (float) $item['confidence'] < self::HIGH_CONFIDENCE)) {
-            return ['status' => 'needs_confirmation', 'items' => $items, 'reminders' => collect()];
+        $capture = $this->brain->interpretSlackCapture($text, $user);
+        $items = $capture['items'] ?? [];
+
+        if ($items === []) {
+            return ['status' => 'failed', 'items' => [], 'reminders' => collect(), 'source' => $capture['source'] ?? null];
+        }
+
+        if (($capture['status'] ?? null) === 'needs_confirmation'
+            || collect($items)->contains(fn (array $item): bool => (float) $item['confidence'] < self::HIGH_CONFIDENCE || ! ($item['due_at'] ?? null))) {
+            $clarification = $this->createPendingClarification($items[0], $text, $slackUserId, $channelId, $messageTs, $user);
+
+            return [
+                'status' => 'needs_confirmation',
+                'items' => $items,
+                'reminders' => collect(),
+                'clarification' => $clarification,
+                'source' => $capture['source'] ?? null,
+            ];
         }
 
         $reminders = collect($items)
-            ->map(fn (array $item, int $index): MiriamReminder => $this->createFromParsedItem(
-                $item,
-                $slackUserId,
-                $channelId,
-                $messageTs ? "{$messageTs}:{$index}" : null,
-                $user,
-            ));
+            ->map(function (array $item, int $index) use ($slackUserId, $channelId, $messageTs, $user, $capture): MiriamReminder {
+                $reminder = $this->createFromParsedItem(
+                    $item,
+                    $slackUserId,
+                    $channelId,
+                    $messageTs ? "{$messageTs}:{$index}" : null,
+                    $user,
+                );
 
-        return ['status' => 'created', 'items' => $items, 'reminders' => $reminders];
+                foreach ($capture['ai_events'] ?? [] as $event) {
+                    $this->recordEvent($reminder, $event['event_type'], $event['channel'] ?? null, $event['metadata'] ?? []);
+                }
+
+                if (($item['source'] ?? null) === 'slack_ai') {
+                    $this->recordEvent($reminder, 'reminder_created_from_ai', 'slack', [
+                        'confidence' => $item['confidence'] ?? null,
+                    ]);
+                }
+
+                return $reminder;
+            });
+
+        return ['status' => 'created', 'items' => $items, 'reminders' => $reminders, 'source' => $capture['source'] ?? null];
     }
 
     public function sendConfirmation(MiriamReminder $reminder): array
@@ -162,6 +194,118 @@ class MiriamReminderService
             $channel,
             $clarification ?: 'I found '.count($items).' possible '.Str::plural('task', count($items)).'. Should I save them?'
         );
+    }
+
+    private function createPendingClarification(array $item, string $text, string $slackUserId, string $channelId, ?string $messageTs, ?User $user): MiriamSlackClarification
+    {
+        $question = $item['clarification'] ?? 'I found a possible task. What time should I use?';
+
+        $clarification = $messageTs
+            ? MiriamSlackClarification::query()->where('source_message_ts', $messageTs)->first()
+            : null;
+
+        if ($clarification) {
+            return $clarification;
+        }
+
+        return MiriamSlackClarification::create([
+            'user_id' => $user?->id,
+            'slack_user_id' => $slackUserId,
+            'slack_channel_id' => $channelId,
+            'source_message_ts' => $messageTs,
+            'original_text' => $text,
+            'clarification_question' => $question,
+            'status' => 'pending',
+            'payload' => [
+                'item' => $item,
+                'events' => [[
+                    'event_type' => 'clarification_created',
+                    'channel' => 'slack',
+                    'metadata' => ['question' => $question],
+                ]],
+            ],
+            'expires_at' => CarbonImmutable::now('UTC')->addHours(12),
+        ]);
+    }
+
+    private function resolvePendingClarification(string $text, string $slackUserId, string $channelId, ?string $messageTs, ?User $user): ?array
+    {
+        $answer = $this->normalizeClarificationAnswer($text);
+
+        if (! in_array($answer, ['am', 'pm'], true)) {
+            return null;
+        }
+
+        /** @var MiriamSlackClarification|null $clarification */
+        $clarification = MiriamSlackClarification::query()
+            ->where('slack_user_id', $slackUserId)
+            ->where('slack_channel_id', $channelId)
+            ->where('status', 'pending')
+            ->where(function ($query): void {
+                $query->whereNull('expires_at')->orWhere('expires_at', '>', CarbonImmutable::now('UTC'));
+            })
+            ->latest()
+            ->first();
+
+        if (! $clarification) {
+            return null;
+        }
+
+        $original = (string) ($clarification->payload['item']['original_text'] ?? $clarification->original_text);
+        $resolvedText = preg_replace('/\btomorrow\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\b/i', 'tomorrow at $1'.($answer === 'am' ? 'am' : 'pm'), $original, 1);
+        $capture = $this->brain->interpretSlackCapture($resolvedText ?: $original, $user);
+        $item = $capture['items'][0] ?? null;
+
+        if (! $item || ! ($item['due_at'] ?? null) || (float) ($item['confidence'] ?? 0) < self::HIGH_CONFIDENCE) {
+            return null;
+        }
+
+        $reminder = $this->createFromParsedItem(
+            $item + ['original_text' => $original],
+            $slackUserId,
+            $channelId,
+            $messageTs,
+            $user,
+        );
+
+        foreach ($clarification->payload['events'] ?? [] as $event) {
+            $this->recordEvent($reminder, $event['event_type'], $event['channel'] ?? null, $event['metadata'] ?? []);
+        }
+
+        $clarification->forceFill([
+            'status' => 'resolved',
+            'resolved_reminder_id' => $reminder->id,
+            'resolved_at' => CarbonImmutable::now('UTC'),
+        ])->save();
+
+        $this->recordEvent($reminder, 'clarification_resolved', 'slack', [
+            'clarification_id' => $clarification->id,
+            'answer' => $answer,
+        ]);
+
+        return [
+            'status' => 'created',
+            'items' => [$item],
+            'reminders' => collect([$reminder->fresh() ?: $reminder]),
+            'source' => 'clarification',
+        ];
+    }
+
+    private function normalizeClarificationAnswer(string $text): string
+    {
+        $value = Str::of($text)
+            ->lower()
+            ->replaceMatches('/<@[a-z0-9]+>/i', '')
+            ->replaceMatches('/^@miriam[:,]?\s*/i', '')
+            ->replaceMatches('/^miriam[:,]?\s*/i', '')
+            ->trim()
+            ->toString();
+
+        return match (true) {
+            in_array($value, ['am', 'a.m.', 'morning'], true) => 'am',
+            in_array($value, ['pm', 'p.m.', 'evening', 'night'], true) => 'pm',
+            default => $value,
+        };
     }
 
     public function sendParseHelp(string $channel): array
@@ -308,6 +452,9 @@ class MiriamReminderService
             'metadata' => [
                 'source' => $item['source'] ?? 'slack',
                 'original_text' => $item['original_text'] ?? null,
+                'description' => $item['description'] ?? null,
+                'risk_level' => $item['risk_level'] ?? null,
+                'ai_payload' => $item['ai_payload'] ?? null,
             ],
         ]);
 
