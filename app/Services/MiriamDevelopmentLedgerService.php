@@ -349,15 +349,21 @@ class MiriamDevelopmentLedgerService
             ];
         }
 
-        $jobs = DB::table('miriam_development_jobs')
-            ->select(['id'])
+        $jobs = MiriamDevelopmentJob::query()
             ->whereIn('status', ['waiting_for_approval', 'waiting_for_manual_fix'])
             ->where('updated_at', '<=', now()->subHours($olderThanHours))
             ->get();
 
         $archived = 0;
+        $safetyGatesPreserved = 0;
 
         foreach ($jobs as $job) {
+            if ($this->hasSafetyGate($job)) {
+                $safetyGatesPreserved++;
+
+                continue;
+            }
+
             if (DB::table('miriam_development_job_events')
                 ->where('development_job_id', $job->id)
                 ->where('event_type', 'stale_approval_notice_archived')
@@ -380,7 +386,12 @@ class MiriamDevelopmentLedgerService
             }
         }
 
-        return ['archived' => $archived, 'dry_run' => $dryRun, 'skipped_reason' => null];
+        return [
+            'archived' => $archived,
+            'dry_run' => $dryRun,
+            'safety_gates_preserved' => $safetyGatesPreserved,
+            'skipped_reason' => null,
+        ];
     }
 
     public function quietModeEnabledAt(): \Illuminate\Support\Carbon
@@ -471,7 +482,7 @@ class MiriamDevelopmentLedgerService
         return is_string($hash) ? $hash : null;
     }
 
-    private function hasSafetyGate(MiriamDevelopmentJob $job): bool
+    public function hasSafetyGate(MiriamDevelopmentJob $job): bool
     {
         if ($this->textHasSafetyGate($job->error_message ?: '')) {
             return true;
@@ -495,7 +506,7 @@ class MiriamDevelopmentLedgerService
     {
         $haystack = strtolower($text);
 
-        foreach (['destructive', 'production deploy', '.env', 'secret', 'credential', 'delete', 'payment', 'billing', 'external message'] as $needle) {
+        foreach (['destructive', 'production deploy', '.env', 'secret', 'credential', 'delete', 'payment', 'billing', 'external message', 'safety gate'] as $needle) {
             if (str_contains($haystack, $needle)) {
                 return true;
             }

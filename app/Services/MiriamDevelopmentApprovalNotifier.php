@@ -292,6 +292,7 @@ class MiriamDevelopmentApprovalNotifier
             'manual credentials',
             'human business decision',
             'hard safety',
+            'safety gate',
         ]);
     }
 

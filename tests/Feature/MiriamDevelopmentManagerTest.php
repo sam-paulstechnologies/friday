@@ -186,7 +186,7 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->assertSame('miriam-product-build', $program->slug);
     }
 
-    public function test_one_phase_result_stores_artifacts_and_pauses_for_approval(): void
+    public function test_normal_one_phase_result_stores_artifacts_and_completes_without_approval(): void
     {
         $this->runner('mra_valid', ['status' => 'active']);
         $this->promptProgram(includeNextPhase: true);
@@ -196,7 +196,7 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->withToken('mra_valid')
             ->postJson("/api/runner/jobs/{$job->id}/phase-runs/{$phaseRun->id}/result", $this->onePhasePayload())
             ->assertOk()
-            ->assertJsonPath('phase_run.status', 'output_received')
+            ->assertJsonPath('phase_run.status', 'passed')
             ->assertJsonPath('phase_run.parsed_result.one_phase_execution', true)
             ->assertJsonPath('phase_run.validation.php_artisan_test', 'passed')
             ->assertJsonPath('phase_run.backup_paths.0', 'storage/app/backups/source.zip')
@@ -204,10 +204,10 @@ class MiriamDevelopmentManagerTest extends TestCase
             ->assertJsonPath('phase_run.manifest_after_available', true);
 
         $job->refresh();
-        $this->assertSame('waiting_for_approval', $job->status);
-        $this->assertSame(0, $job->completed_phases);
+        $this->assertSame('running', $job->status);
+        $this->assertSame(1, $job->completed_phases);
         $this->assertSame('ready', $phaseRun->phase->fresh()->status);
-        $this->assertSame('queued', MiriamPromptPhase::where('phase_key', 'phase_next')->firstOrFail()->status);
+        $this->assertSame('assigned', $job->phaseRuns()->where('phase_order', 2)->firstOrFail()->fresh()->status);
         $this->assertDatabaseHas('miriam_development_job_events', [
             'development_job_id' => $job->id,
             'phase_run_id' => $phaseRun->id,
@@ -235,7 +235,7 @@ class MiriamDevelopmentManagerTest extends TestCase
             ->assertJsonPath('phase_run.parsed_result.fake_codex_mode', true)
             ->assertJsonPath('phase_run.validation.fake_codex_mode', 'passed');
 
-        $this->assertSame('waiting_for_approval', $job->fresh()->status);
+        $this->assertSame('waiting_for_manual_fix', $job->fresh()->status);
         $this->assertSame('queued', MiriamPromptPhase::where('phase_key', 'phase_next')->firstOrFail()->status);
     }
 
@@ -455,7 +455,7 @@ class MiriamDevelopmentManagerTest extends TestCase
             ->assertJsonPath('instruction.failure_id', $failure->id);
     }
 
-    public function test_runner_fix_result_marks_failure_fixed_without_advancing_phase(): void
+    public function test_runner_fix_result_marks_failure_fixed_and_continues_without_approval(): void
     {
         $runner = $this->runner('mra_valid', ['status' => 'active']);
         $this->promptProgram(includeNextPhase: true);
@@ -473,8 +473,8 @@ class MiriamDevelopmentManagerTest extends TestCase
             ->assertOk()
             ->assertJsonPath('failure.status', 'fixed');
 
-        $this->assertSame('waiting_for_approval', $job->fresh()->status);
-        $this->assertSame('queued', MiriamPromptPhase::where('phase_key', 'phase_next')->firstOrFail()->status);
+        $this->assertSame('running', $job->fresh()->status);
+        $this->assertSame('assigned', $job->phaseRuns()->where('phase_order', 2)->firstOrFail()->fresh()->status);
     }
 
     public function test_manual_fix_resume_and_rollback_instructions_are_explicit(): void
@@ -934,7 +934,7 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->assertFalse(app(MiriamRunnerMonitoringService::class)->alertsMuted());
     }
 
-    public function test_waiting_for_approval_records_ledger_and_sends_one_summary_without_approval_card(): void
+    public function test_normal_completed_phase_records_ledger_and_sends_summary_without_approval_card(): void
     {
         $this->seedSlackContext();
         Cache::flush();
@@ -948,7 +948,7 @@ class MiriamDevelopmentManagerTest extends TestCase
             $this->onePhasePayload()
         );
 
-        $this->assertSame('waiting_for_approval', $job->fresh()->status);
+        $this->assertSame('completed', $job->fresh()->status);
         $this->assertDatabaseHas('miriam_development_ledgers', [
             'job_id' => $job->id,
             'status' => 'completed',
@@ -1147,7 +1147,16 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->seedSlackContext();
         $runner = $this->runner('mra_approve_job', ['status' => 'active']);
         $job = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram(options: ['runner_agent_id' => $runner->id]);
-        app(MiriamDevelopmentManagerService::class)->submitPhaseResult($job, $job->phaseRuns()->firstOrFail(), $runner, $this->onePhasePayload());
+        $phaseRun = $job->phaseRuns()->firstOrFail();
+        $phaseRun->update([
+            'status' => 'output_received',
+            'validation_json' => json_encode(['php_artisan_test' => 'passed'], JSON_PRETTY_PRINT),
+            'completed_at' => now(),
+        ]);
+        $job->update([
+            'status' => 'waiting_for_approval',
+            'error_message' => 'Safety gate validation passed. Manual approval is still required before continuing.',
+        ]);
 
         $this->postSlackSlash("dev approve job {$job->id}")
             ->assertOk()
@@ -1166,14 +1175,32 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->seedSlackContext();
         $runner = $this->runner('mra_approve_alias', ['status' => 'active']);
         $aliasJob = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram(options: ['runner_agent_id' => $runner->id]);
-        app(MiriamDevelopmentManagerService::class)->submitPhaseResult($aliasJob, $aliasJob->phaseRuns()->firstOrFail(), $runner, $this->onePhasePayload());
+        $aliasPhaseRun = $aliasJob->phaseRuns()->firstOrFail();
+        $aliasPhaseRun->update([
+            'status' => 'output_received',
+            'validation_json' => json_encode(['php_artisan_test' => 'passed'], JSON_PRETTY_PRINT),
+            'completed_at' => now(),
+        ]);
+        $aliasJob->update([
+            'status' => 'waiting_for_approval',
+            'error_message' => 'Safety gate validation passed. Manual approval is still required before continuing.',
+        ]);
 
         $this->postSlackSlash("dev approve {$aliasJob->id}")
             ->assertOk()
             ->assertJsonPath('text', "Job #{$aliasJob->id} approved and completed.");
 
         $buttonJob = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram(options: ['runner_agent_id' => $runner->id]);
-        app(MiriamDevelopmentManagerService::class)->submitPhaseResult($buttonJob, $buttonJob->phaseRuns()->firstOrFail(), $runner, $this->onePhasePayload());
+        $buttonPhaseRun = $buttonJob->phaseRuns()->firstOrFail();
+        $buttonPhaseRun->update([
+            'status' => 'output_received',
+            'validation_json' => json_encode(['php_artisan_test' => 'passed'], JSON_PRETTY_PRINT),
+            'completed_at' => now(),
+        ]);
+        $buttonJob->update([
+            'status' => 'waiting_for_approval',
+            'error_message' => 'Safety gate validation passed. Manual approval is still required before continuing.',
+        ]);
 
         $this->postSlackInteraction("dev_approve_job:{$buttonJob->id}")
             ->assertOk()
@@ -1223,7 +1250,7 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->assertNotSame('completed', $job->fresh()->status);
     }
 
-    public function test_validation_only_job_becomes_completed_after_manual_validation_approval(): void
+    public function test_normal_manual_validation_result_stores_ledger_only_and_completes(): void
     {
         $this->seedSlackContext();
         $runner = $this->runner('mra_validation_approval', ['status' => 'active']);
@@ -1243,21 +1270,55 @@ class MiriamDevelopmentManagerTest extends TestCase
             ])
         );
         $failure = MiriamDevelopmentFailure::latest()->firstOrFail();
+        Http::fake(['slack.com/*' => Http::response(['ok' => true, 'channel' => 'C123', 'ts' => '456.789'])]);
+        Cache::flush();
 
         app(DevelopmentFailureRecoveryService::class)->recordManualValidationResult($failure, $runner, [
             'status' => 'passed',
             'validation_json' => ['php_artisan_test' => 'passed'],
         ]);
 
-        $this->assertSame('waiting_for_approval', $job->fresh()->status);
-        $this->assertSame('fixed', $failure->fresh()->status);
-
-        $this->postSlackSlash("dev approve job {$job->id}")
-            ->assertOk()
-            ->assertJsonPath('text', "Job #{$job->id} approved and completed.");
-
         $this->assertSame('completed', $job->fresh()->status);
+        $this->assertSame('fixed', $failure->fresh()->status);
         $this->assertSame('passed', $job->phaseRuns()->firstOrFail()->fresh()->status);
+        $this->assertDatabaseHas('miriam_development_ledgers', [
+            'job_id' => $job->id,
+            'status' => 'completed',
+            'summary' => 'Normal failure recovery validation passed and was stored in Miriam DB.',
+        ]);
+        Http::assertNothingSent();
+    }
+
+    public function test_safety_gate_manual_validation_still_requires_approval_card(): void
+    {
+        $this->seedSlackContext();
+        $runner = $this->runner('mra_safety_validation_approval', ['status' => 'active']);
+        $job = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram(options: ['runner_agent_id' => $runner->id]);
+        app(MiriamDevelopmentManagerService::class)->submitPhaseResult(
+            $job,
+            $job->phaseRuns()->firstOrFail(),
+            $runner,
+            $this->onePhasePayload(safety: 'blocked', status: 'blocked')
+        );
+        $failure = MiriamDevelopmentFailure::latest()->firstOrFail();
+        $failure->update([
+            'failure_type' => 'safety_risk',
+            'severity' => 'critical',
+            'needs_user_at_system' => true,
+            'summary' => 'Destructive database action requested.',
+        ]);
+
+        Http::fake(['slack.com/*' => Http::response(['ok' => true, 'channel' => 'C123', 'ts' => '456.789'])]);
+        Cache::flush();
+
+        app(DevelopmentFailureRecoveryService::class)->recordManualValidationResult($failure->fresh(['job', 'phaseRun']), $runner, [
+            'status' => 'passed',
+            'validation_json' => ['php_artisan_test' => 'passed'],
+        ]);
+
+        $this->assertSame('waiting_for_approval', $job->fresh()->status);
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), "dev_approve_job:{$job->id}")
+            && str_contains((string) $request->body(), 'Safety gate validation passed'));
     }
 
     public function test_slack_dev_resume_remains_for_paused_jobs_only(): void
@@ -1271,7 +1332,7 @@ class MiriamDevelopmentManagerTest extends TestCase
             ->assertOk()
             ->assertJsonPath('text', 'No paused Miriam development job was found to resume.');
 
-        $this->assertSame('waiting_for_approval', $job->fresh()->status);
+        $this->assertSame('completed', $job->fresh()->status);
     }
 
     public function test_slack_interaction_payload_routes_to_apply_fix(): void
@@ -1843,6 +1904,29 @@ class MiriamDevelopmentManagerTest extends TestCase
 
         $this->assertSame('waiting_for_approval', $job->fresh()->status);
         $this->assertDatabaseHas('miriam_development_job_events', [
+            'development_job_id' => $job->id,
+            'event_type' => 'stale_approval_notice_archived',
+        ]);
+    }
+
+    public function test_stale_approval_archive_preserves_true_safety_gates(): void
+    {
+        $this->runner('mra_stale_safety_notice', ['status' => 'active', 'last_seen_at' => now()]);
+        $this->promptProgram();
+        $job = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram();
+        $job->update([
+            'status' => 'waiting_for_approval',
+            'error_message' => 'Destructive database action requires explicit approval.',
+        ]);
+        $job->forceFill(['updated_at' => now()->subHours(30)])->saveQuietly();
+
+        $this->artisan('miriam:dev:archive-stale-approvals', ['--older-than-hours' => 24])
+            ->expectsOutputToContain('Archived 0 stale Miriam approval/manual-fix notice')
+            ->expectsOutputToContain('1 active safety gate notice')
+            ->assertExitCode(0);
+
+        $this->assertSame('waiting_for_approval', $job->fresh()->status);
+        $this->assertDatabaseMissing('miriam_development_job_events', [
             'development_job_id' => $job->id,
             'event_type' => 'stale_approval_notice_archived',
         ]);

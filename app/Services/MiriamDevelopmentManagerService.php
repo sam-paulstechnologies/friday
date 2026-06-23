@@ -396,11 +396,62 @@ class MiriamDevelopmentManagerService
             );
             app(MiriamDevelopmentApprovalNotifier::class)->notifyJobNeedsAttention($freshJob->fresh(['managedApp', 'runnerAgent']));
         } elseif ($isOnePhaseExecution) {
-            $freshJob->update([
-                'status' => $validationFailed || $scannerStatus === 'blocked' ? 'waiting_for_manual_fix' : 'waiting_for_approval',
-                'failed_phase_id' => $validationFailed || $scannerStatus === 'blocked' ? $phaseRun->prompt_phase_id : null,
-                'error_message' => $data['error_message'] ?? 'One-phase Codex execution completed and is paused for review.',
-            ]);
+            $isSimulatedCodex = (bool) data_get($parsed, 'fake_codex_mode', false)
+                || (bool) data_get($validation, 'fake_codex_mode', false);
+            $gateFailed = $validationFailed
+                || $scannerStatus === 'blocked'
+                || ! empty($parsed['blockers'] ?? [])
+                || in_array(($data['status'] ?? null), ['failed', 'blocked'], true);
+            $normalSuccess = ! $validationFailed
+                && $scannerStatus !== 'blocked'
+                && empty($parsed['blockers'] ?? [])
+                && ! $isSimulatedCodex
+                && ! in_array(($data['status'] ?? null), ['failed', 'blocked'], true);
+
+            if ($normalSuccess) {
+                $phaseRun->update([
+                    'status' => 'passed',
+                    'error_message' => null,
+                ]);
+            }
+
+            if ($normalSuccess) {
+                $completed = $freshJob->phaseRuns()->where('status', 'passed')->count();
+                $next = $freshJob->phaseRuns()
+                    ->whereIn('status', ['queued', 'assigned'])
+                    ->orderBy('phase_order')
+                    ->first();
+
+                if ($next) {
+                    $next->update([
+                        'runner_agent_id' => $runner->id,
+                        'status' => 'assigned',
+                    ]);
+
+                    $freshJob->update([
+                        'status' => 'running',
+                        'completed_phases' => $completed,
+                        'current_phase_id' => $next->prompt_phase_id,
+                        'completed_at' => null,
+                        'failed_phase_id' => null,
+                        'error_message' => 'One-phase Codex execution completed and validation passed. Next phase assigned without approval.',
+                    ]);
+                } else {
+                    $freshJob->update([
+                        'status' => 'completed',
+                        'completed_phases' => $completed,
+                        'completed_at' => now(),
+                        'failed_phase_id' => null,
+                        'error_message' => 'One-phase Codex execution completed and validation passed.',
+                    ]);
+                }
+            } else {
+                $freshJob->update([
+                    'status' => 'waiting_for_manual_fix',
+                    'failed_phase_id' => $gateFailed ? $phaseRun->prompt_phase_id : null,
+                    'error_message' => $data['error_message'] ?? 'One-phase Codex execution needs validation or safety attention.',
+                ]);
+            }
             $this->recordEvent(
                 $freshJob,
                 'one_phase_codex_execution_result_received',
@@ -413,17 +464,14 @@ class MiriamDevelopmentManagerService
                     'validation' => $validation,
                     'changed_files_count' => count($filesChanged),
                     'safety_scanner' => $scannerStatus,
+                    'auto_completed_normal_work' => $normalSuccess,
+                    'simulated_codex' => $isSimulatedCodex,
                 ],
                 $phaseRun
             );
 
-            if ($validationFailed || $scannerStatus === 'blocked' || in_array(($data['status'] ?? null), ['failed', 'blocked'], true)) {
+            if ($gateFailed) {
                 app(DevelopmentFailureRecoveryService::class)->createFailureFromPhaseRun($phaseRun->fresh(['job', 'phase']), $runner);
-            } else {
-                app(MiriamDevelopmentApprovalNotifier::class)->notifyJobNeedsAttention(
-                    $freshJob->fresh(['managedApp', 'runnerAgent']),
-                    'One-phase Codex execution completed and needs review before continuing.'
-                );
             }
         } elseif ($isMultiPhaseExecution) {
             $freshPhaseRun = $phaseRun->fresh();

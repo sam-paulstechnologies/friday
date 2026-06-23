@@ -25,6 +25,7 @@ class MiriamDevelopmentArchiveStaleApprovals extends Command
 
         $prefix = $result['dry_run'] ? 'Would archive' : 'Archived';
         $this->info("{$prefix} {$result['archived']} stale Miriam approval/manual-fix notice(s).");
+        $this->line(($result['safety_gates_preserved'] ?? 0).' active safety gate notice(s) preserved.');
         $this->line('Job gates and audit history were preserved.');
 
         return self::SUCCESS;
