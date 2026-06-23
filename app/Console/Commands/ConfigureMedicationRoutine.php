@@ -10,7 +10,7 @@ class ConfigureMedicationRoutine extends Command
 {
     protected $signature = 'miriam:medication-routine:configure {--user= : User email or id} {--breakfast= : Morning dose reminder time, HH:MM in Asia/Dubai} {--dinner= : Evening dose reminder time, HH:MM in Asia/Dubai}';
 
-    protected $description = 'Configure the fixed Miriam medication routine without inventing medication names.';
+    protected $description = 'Configure the user-provided Miriam medication routine without medical advice.';
 
     public function handle(MedicationReminderService $reminders): int
     {
@@ -33,7 +33,7 @@ class ConfigureMedicationRoutine extends Command
 
         $schedules = $reminders->configureDailyRoutine($user, $breakfast, $dinner);
 
-        $this->info('Medication routine configured in Asia/Dubai without changing medication names or medical guidance.');
+        $this->info('Medication routine configured in Asia/Dubai using only the user-provided medication list.');
         $schedules->each(fn ($schedule) => $this->line("{$schedule->dose_key}: {$schedule->schedule_time} / {$schedule->dosage_text} / {$schedule->timing_note}"));
 
         return self::SUCCESS;

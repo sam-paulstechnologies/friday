@@ -22,6 +22,7 @@ class MedicationReminderService
     public const ACKNOWLEDGED_STATUSES = ['taken', 'skipped'];
     private const MORNING_DEADLINE_TIME = '10:00:00';
     private const CRITICAL_REPEAT_MINUTES = 5;
+    private const WEDNESDAY_ISO = 3;
 
     public function __construct(private readonly CalendarSyncService $calendarSyncService) {}
 
@@ -32,19 +33,50 @@ class MedicationReminderService
         return collect([
             [
                 'dose_key' => 'morning',
-                'label' => 'Morning dose',
-                'dosage_text' => '3 tablets',
+                'label' => 'Morning medications',
+                'dosage_text' => 'Xigduo XR 5mg/1000mg; Physiotens 0.2mg; Lodiva 10mg/160mg; Aterpen 10mg/20mg',
                 'timing_note' => 'after breakfast',
                 'schedule_time' => $breakfastTime,
                 'hard_deadline_time' => self::MORNING_DEADLINE_TIME,
+                'metadata' => [
+                    'frequency' => 'daily',
+                    'medication_items' => [
+                        ['name' => 'Xigduo XR 5mg/1000mg', 'instruction' => 'Take twice daily', 'timing' => 'Morning after breakfast'],
+                        ['name' => 'Physiotens 0.2mg', 'timing' => 'Morning after breakfast'],
+                        ['name' => 'Lodiva 10mg/160mg', 'timing' => 'Morning after breakfast'],
+                        ['name' => 'Aterpen 10mg/20mg', 'timing' => 'Morning after breakfast'],
+                    ],
+                ],
             ],
             [
                 'dose_key' => 'evening',
-                'label' => 'Evening dose',
-                'dosage_text' => '1 tablet',
+                'label' => 'Evening medication',
+                'dosage_text' => 'Xigduo XR 5mg/1000mg',
                 'timing_note' => 'after dinner',
                 'schedule_time' => $dinnerTime,
                 'hard_deadline_time' => null,
+                'metadata' => [
+                    'frequency' => 'daily',
+                    'medication_items' => [
+                        ['name' => 'Xigduo XR 5mg/1000mg', 'instruction' => 'Take twice daily', 'timing' => 'Night after dinner'],
+                    ],
+                ],
+            ],
+            [
+                'dose_key' => 'weekly_ozempic',
+                'label' => 'Weekly medication',
+                'dosage_text' => 'Ozempic',
+                'timing_note' => 'every Wednesday at 07:00',
+                'schedule_time' => '07:00',
+                'hard_deadline_time' => null,
+                'metadata' => [
+                    'frequency' => 'weekly',
+                    'weekday' => self::WEDNESDAY_ISO,
+                    'weekday_name' => 'Wednesday',
+                    'medication_items' => [
+                        ['name' => 'Ozempic', 'timing' => 'Every Wednesday at 07:00 Asia/Dubai'],
+                    ],
+                ],
             ],
         ])->map(fn (array $dose) => MedicationDoseSchedule::updateOrCreate(
             [
@@ -64,6 +96,7 @@ class MedicationReminderService
                 'metadata' => [
                     'routine_source' => 'miriam_medication_routine_configure',
                     'medical_guidance_locked' => true,
+                    ...($dose['metadata'] ?? []),
                 ],
             ]
         ));
@@ -83,11 +116,17 @@ class MedicationReminderService
             ->values();
     }
 
-    public function ensureLogForSchedule(MedicationDoseSchedule $schedule, ?CarbonImmutable $now = null): MedicationDoseLog
+    public function ensureLogForSchedule(MedicationDoseSchedule $schedule, ?CarbonImmutable $now = null): ?MedicationDoseLog
     {
         $now ??= CarbonImmutable::now('UTC');
         $timezone = $schedule->timezone ?: self::DEFAULT_TIMEZONE;
-        $doseDate = $now->setTimezone($timezone)->toDateString();
+        $localNow = $now->setTimezone($timezone);
+
+        if (! $this->scheduleIsDueOnDate($schedule, $localNow)) {
+            return null;
+        }
+
+        $doseDate = $localNow->toDateString();
         $scheduledFor = $this->scheduledFor($schedule, $doseDate);
 
         $log = MedicationDoseLog::query()
@@ -264,12 +303,15 @@ class MedicationReminderService
     public function statusForUser(User $user, ?CarbonImmutable $now = null): array
     {
         $now ??= CarbonImmutable::now('UTC');
-        $logs = MedicationDoseSchedule::query()
+        $schedules = MedicationDoseSchedule::query()
             ->where('user_id', $user->id)
             ->where('active', true)
             ->orderBy('schedule_time')
-            ->get()
-            ->map(fn (MedicationDoseSchedule $schedule) => $this->ensureLogForSchedule($schedule, $now)->fresh(['schedule', 'events']))
+            ->get();
+
+        $logs = $schedules
+            ->map(fn (MedicationDoseSchedule $schedule) => $this->ensureLogForSchedule($schedule, $now)?->fresh(['schedule', 'events']))
+            ->filter()
             ->values();
 
         $items = $logs->map(function (MedicationDoseLog $log) use ($now): array {
@@ -283,6 +325,8 @@ class MedicationReminderService
                 'label' => $schedule?->label,
                 'dosage_text' => $schedule?->dosage_text,
                 'timing_note' => $schedule?->timing_note,
+                'medication_items' => $this->medicationItems($schedule),
+                'medication_count' => count($this->medicationItems($schedule)),
                 'schedule_time' => $schedule?->schedule_time,
                 'timezone' => $log->scheduled_timezone,
                 'status' => $critical ? 'critical_overdue' : ($overdue && $log->status === 'pending' ? 'overdue' : $log->status),
@@ -313,10 +357,23 @@ class MedicationReminderService
 
         return [
             'items' => $items,
+            'routine' => $schedules->map(fn (MedicationDoseSchedule $schedule) => [
+                'id' => $schedule->id,
+                'dose_key' => $schedule->dose_key,
+                'label' => $schedule->label,
+                'dosage_text' => $schedule->dosage_text,
+                'timing_note' => $schedule->timing_note,
+                'schedule_time' => $schedule->schedule_time,
+                'timezone' => $schedule->timezone ?: self::DEFAULT_TIMEZONE,
+                'frequency' => $schedule->metadata['frequency'] ?? 'daily',
+                'weekday' => $schedule->metadata['weekday_name'] ?? null,
+                'medication_items' => $this->medicationItems($schedule),
+                'medication_count' => count($this->medicationItems($schedule)),
+            ])->values(),
             'pending_count' => $pending->count(),
             'taken_count' => $items->where('status', 'taken')->count(),
             'overdue_count' => $items->where('overdue', true)->count(),
-            'status_label' => $items->isEmpty()
+            'status_label' => $schedules->isEmpty()
                 ? 'No medication routine configured'
                 : ($pending->count() > 0 ? 'Medication pending' : 'Medication confirmed'),
         ];
@@ -372,6 +429,35 @@ class MedicationReminderService
         )->utc();
     }
 
+    private function scheduleIsDueOnDate(MedicationDoseSchedule $schedule, CarbonImmutable $localDate): bool
+    {
+        $metadata = $schedule->metadata ?? [];
+        $frequency = $metadata['frequency'] ?? 'daily';
+
+        if ($frequency !== 'weekly') {
+            return true;
+        }
+
+        return (int) ($metadata['weekday'] ?? 0) === $localDate->dayOfWeekIso;
+    }
+
+    private function medicationItems(?MedicationDoseSchedule $schedule): array
+    {
+        if (! $schedule) {
+            return [];
+        }
+
+        return collect($schedule->metadata['medication_items'] ?? [])
+            ->map(fn (array $item) => array_filter([
+                'name' => $item['name'] ?? null,
+                'instruction' => $item['instruction'] ?? null,
+                'timing' => $item['timing'] ?? null,
+            ], fn ($value) => filled($value)))
+            ->filter(fn (array $item) => filled($item['name'] ?? null))
+            ->values()
+            ->all();
+    }
+
     private function isQuietTime(MedicationDoseSchedule $schedule, CarbonImmutable $now): bool
     {
         if (! $schedule->quiet_hours_start || ! $schedule->quiet_hours_end) {
@@ -407,7 +493,7 @@ class MedicationReminderService
     private function notificationMessage(MedicationDoseSchedule $schedule): string
     {
         if ($schedule->hide_details_in_notifications) {
-            return 'A scheduled dose is due. Open Miriam to confirm Taken, Snooze, or Skip.';
+            return 'A scheduled medication is due. Open Miriam to confirm Taken, Snooze, or Skip.';
         }
 
         return trim("{$schedule->label}: {$schedule->dosage_text} {$schedule->timing_note}. Open Miriam to confirm Taken, Snooze, or Skip.");
@@ -629,7 +715,7 @@ class MedicationReminderService
             return match ($escalationLevel) {
                 'critical_overdue' => 'Critical Miriam medication reminder: this is overdue. Please confirm Taken or Skip.',
                 'urgent', 'final_pre_deadline' => 'Urgent Miriam medication reminder: this is still pending. Please confirm before 10:00.',
-                default => 'Miriam medication reminder: a scheduled dose is due. Please confirm Taken, Snooze, or Skip.',
+                default => 'Medication reminder: scheduled medication is due.',
             };
         }
 

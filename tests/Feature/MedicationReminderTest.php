@@ -35,7 +35,7 @@ class MedicationReminderTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_daily_morning_and_evening_routine_can_be_configured_without_medication_names(): void
+    public function test_corrected_named_medication_routine_can_be_configured(): void
     {
         [$user] = $this->context();
 
@@ -45,23 +45,84 @@ class MedicationReminderTest extends TestCase
             '--dinner' => '20:30',
         ])->assertExitCode(0);
 
-        $this->assertDatabaseHas('medication_dose_schedules', [
-            'user_id' => $user->id,
-            'dose_key' => 'morning',
-            'dosage_text' => '3 tablets',
-            'timing_note' => 'after breakfast',
-            'schedule_time' => '08:30',
-            'hard_deadline_time' => '10:00:00',
-            'timezone' => 'Asia/Dubai',
+        $this->assertSame(3, MedicationDoseSchedule::where('user_id', $user->id)->count());
+
+        $morning = MedicationDoseSchedule::where('user_id', $user->id)->where('dose_key', 'morning')->firstOrFail();
+        $evening = MedicationDoseSchedule::where('user_id', $user->id)->where('dose_key', 'evening')->firstOrFail();
+        $weekly = MedicationDoseSchedule::where('user_id', $user->id)->where('dose_key', 'weekly_ozempic')->firstOrFail();
+
+        $this->assertSame('Morning medications', $morning->label);
+        $this->assertSame('after breakfast', $morning->timing_note);
+        $this->assertSame('08:30', $morning->schedule_time);
+        $this->assertSame('10:00:00', $morning->hard_deadline_time);
+        $this->assertSame([
+            'Xigduo XR 5mg/1000mg',
+            'Physiotens 0.2mg',
+            'Lodiva 10mg/160mg',
+            'Aterpen 10mg/20mg',
+        ], collect($morning->metadata['medication_items'])->pluck('name')->all());
+
+        $this->assertSame('Evening medication', $evening->label);
+        $this->assertSame('Xigduo XR 5mg/1000mg', $evening->dosage_text);
+        $this->assertSame('after dinner', $evening->timing_note);
+        $this->assertSame('20:30', $evening->schedule_time);
+
+        $this->assertSame('Weekly medication', $weekly->label);
+        $this->assertSame('Ozempic', $weekly->dosage_text);
+        $this->assertSame('weekly', $weekly->metadata['frequency']);
+        $this->assertSame(3, $weekly->metadata['weekday']);
+        $this->assertSame('07:00', $weekly->schedule_time);
+        $this->assertTrue($morning->hide_details_in_notifications);
+        $this->assertTrue($weekly->hide_details_in_notifications);
+    }
+
+    public function test_xigduo_is_scheduled_twice_daily(): void
+    {
+        [$user] = $this->context();
+
+        $this->artisan('miriam:medication-routine:configure', [
+            '--user' => $user->email,
+            '--breakfast' => '09:00',
+            '--dinner' => '21:30',
+        ])->assertExitCode(0);
+
+        $xigduoSchedules = MedicationDoseSchedule::where('user_id', $user->id)
+            ->get()
+            ->filter(fn (MedicationDoseSchedule $schedule) => collect($schedule->metadata['medication_items'] ?? [])->pluck('name')->contains('Xigduo XR 5mg/1000mg'));
+
+        $this->assertSame(['morning', 'evening'], $xigduoSchedules->pluck('dose_key')->values()->all());
+    }
+
+    public function test_wednesday_ozempic_weekly_reminder_is_due_at_seven_dubai(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, [
+            'dose_key' => 'weekly_ozempic',
+            'label' => 'Weekly medication',
+            'dosage_text' => 'Ozempic',
+            'timing_note' => 'every Wednesday at 07:00',
+            'schedule_time' => '07:00:00',
+            'hard_deadline_time' => null,
+            'metadata' => [
+                'frequency' => 'weekly',
+                'weekday' => 3,
+                'weekday_name' => 'Wednesday',
+                'medication_items' => [
+                    ['name' => 'Ozempic', 'timing' => 'Every Wednesday at 07:00 Asia/Dubai'],
+                ],
+            ],
         ]);
-        $this->assertDatabaseHas('medication_dose_schedules', [
-            'user_id' => $user->id,
-            'dose_key' => 'evening',
-            'dosage_text' => '1 tablet',
-            'timing_note' => 'after dinner',
-            'schedule_time' => '20:30',
-            'timezone' => 'Asia/Dubai',
-        ]);
+
+        $this->travelToDubai('2026-06-23 07:01:00');
+        $this->assertCount(0, app(MedicationReminderService::class)->ensureLogsForActiveSchedules());
+
+        $this->travelToDubai('2026-06-24 07:01:00');
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        $log = MedicationDoseLog::firstOrFail();
+        $this->assertSame('weekly_ozempic', $log->schedule->dose_key);
+        $this->assertSame('overdue', $log->status);
+        $this->assertSame('2026-06-24 03:00:00', $log->scheduled_for->toDateTimeString());
     }
 
     public function test_configure_command_requires_exact_breakfast_and_dinner_times(): void
@@ -93,8 +154,8 @@ class MedicationReminderTest extends TestCase
         $this->assertSame(1, $log->reminder_attempts);
         $this->assertSame('test-database', $log->last_delivery_channel);
         $this->assertSame('medication_reminder', $notification->data['event_type']);
-        $this->assertStringContainsString('scheduled dose is due', $notification->data['message']);
-        $this->assertStringNotContainsString('3 tablets', $notification->data['message']);
+        $this->assertStringContainsString('scheduled medication is due', $notification->data['message']);
+        $this->assertStringNotContainsString('Xigduo', $notification->data['message']);
         $this->assertStringNotContainsString('after breakfast', $notification->data['message']);
         $this->assertDatabaseHas('medication_reminder_events', [
             'dose_log_id' => $log->id,
@@ -307,11 +368,11 @@ class MedicationReminderTest extends TestCase
             $buttonLabels = collect($payload['blocks'][1]['elements'])->pluck('text.text')->all();
 
             return $request->url() === 'https://hooks.slack.test/medication'
-                && $payload['text'] === 'Miriam medication reminder: a scheduled dose is due. Please confirm Taken, Snooze, or Skip.'
+                && $payload['text'] === 'Medication reminder: scheduled medication is due.'
                 && in_array('Taken', $buttonLabels, true)
                 && in_array('Snooze 15 min', $buttonLabels, true)
                 && in_array('Skip', $buttonLabels, true)
-                && ! str_contains($payload['text'], '3 tablets')
+                && ! str_contains($payload['text'], 'Xigduo')
                 && ! str_contains($payload['text'], 'after breakfast');
         });
         $this->assertSame(1, $user->notifications()->where('data->event_type', 'medication_reminder')->count());
@@ -506,8 +567,9 @@ class MedicationReminderTest extends TestCase
         Http::assertSent(function ($request) {
             $payload = $request->data();
 
-            return str_contains($payload['text'], 'Morning dose')
-                && str_contains($payload['text'], '3 tablets')
+            return str_contains($payload['text'], 'Morning medications')
+                && str_contains($payload['text'], 'Xigduo XR 5mg/1000mg')
+                && str_contains($payload['text'], 'Physiotens 0.2mg')
                 && str_contains($payload['text'], 'after breakfast');
         });
     }
@@ -555,8 +617,8 @@ class MedicationReminderTest extends TestCase
             return $request->method() === 'POST'
                 && str_contains($request->url(), '/calendar/v3/calendars/primary/events')
                 && $payload['summary'] === 'Miriam medication reminder'
-                && $payload['description'] === 'A scheduled dose is due. Open Miriam to confirm Taken, Snooze, or Skip.'
-                && ! str_contains(json_encode($payload), '3 tablets')
+                && $payload['description'] === 'A scheduled medication is due. Open Miriam to confirm Taken, Snooze, or Skip.'
+                && ! str_contains(json_encode($payload), 'Xigduo')
                 && ! str_contains(json_encode($payload), 'after breakfast')
                 && ($payload['extendedProperties']['private']['miriam_source'] ?? null) === 'medication_reminder';
         });
@@ -683,8 +745,10 @@ class MedicationReminderTest extends TestCase
             ->get(route('health.index'))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
-                ->where('medicationDoseStatus.items.0.label', 'Morning dose')
+                ->where('medicationDoseStatus.items.0.label', 'Morning medications')
                 ->where('medicationDoseStatus.items.0.status', 'overdue')
+                ->where('medicationDoseStatus.items.0.medication_items.0.name', 'Xigduo XR 5mg/1000mg')
+                ->where('medicationDoseStatus.routine.0.medication_items.0.name', 'Xigduo XR 5mg/1000mg')
                 ->where('googleCalendar.connected', false)
                 ->where('googleCalendar.connect_url', route('settings.integrations.google.connect'))
             );
@@ -732,8 +796,8 @@ class MedicationReminderTest extends TestCase
             'user_id' => $user->id,
             'workspace_id' => $workspaceId,
             'dose_key' => 'morning',
-            'label' => 'Morning dose',
-            'dosage_text' => '3 tablets',
+            'label' => 'Morning medications',
+            'dosage_text' => 'Xigduo XR 5mg/1000mg; Physiotens 0.2mg; Lodiva 10mg/160mg; Aterpen 10mg/20mg',
             'timing_note' => 'after breakfast',
             'schedule_time' => '08:30:00',
             'timezone' => 'Asia/Dubai',
@@ -743,6 +807,15 @@ class MedicationReminderTest extends TestCase
             'quiet_hours_end' => '07:00:00',
             'hide_details_in_notifications' => true,
             'default_channel' => 'database',
+            'metadata' => [
+                'frequency' => 'daily',
+                'medication_items' => [
+                    ['name' => 'Xigduo XR 5mg/1000mg', 'instruction' => 'Take twice daily', 'timing' => 'Morning after breakfast'],
+                    ['name' => 'Physiotens 0.2mg', 'timing' => 'Morning after breakfast'],
+                    ['name' => 'Lodiva 10mg/160mg', 'timing' => 'Morning after breakfast'],
+                    ['name' => 'Aterpen 10mg/20mg', 'timing' => 'Morning after breakfast'],
+                ],
+            ],
         ], $overrides));
     }
 

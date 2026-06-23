@@ -154,7 +154,8 @@ function MedicationCard({ medications, medicationStatus, doseStatus, googleCalen
                                     <div className="flex flex-wrap items-start justify-between gap-2">
                                         <div>
                                             <div className="font-semibold text-slate-950">{dose.label}</div>
-                                            <div className="text-xs text-slate-500">{dose.dosage_text} / {dose.timing_note} / {dose.scheduled_for_local ?? dose.schedule_time}</div>
+                                            <MedicationItemList items={dose.medication_items} fallback={dose.dosage_text} />
+                                            <div className="mt-1 text-xs text-slate-500">{dose.timing_note} / {dose.scheduled_for_local ?? dose.schedule_time}</div>
                                             <div className="mt-1 text-xs text-slate-500">Attempts: {dose.reminder_attempts} / Last channel: {dose.last_delivery_channel || dose.acknowledgement_channel || 'none'}</div>
                                         </div>
                                         <Badge tone={tone}>{dose.overdue && !['taken', 'skipped'].includes(dose.status) ? 'overdue' : dose.status}</Badge>
@@ -179,7 +180,27 @@ function MedicationCard({ medications, medicationStatus, doseStatus, googleCalen
                     </div>
                 )}
 
-                {medications.length === 0 ? (
+                {(doseStatus?.routine ?? []).length > 0 && (
+                    <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                        <div className="text-sm font-semibold text-slate-950">Configured routine</div>
+                        {(doseStatus?.routine ?? []).map((schedule) => (
+                            <div key={schedule.id} className="rounded-md bg-white p-3 text-sm">
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                    <div>
+                                        <div className="font-semibold text-slate-950">{schedule.label}</div>
+                                        <MedicationItemList items={schedule.medication_items} fallback={schedule.dosage_text} />
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                        {schedule.frequency === 'weekly' ? `${schedule.weekday} ` : ''}{schedule.schedule_time} {schedule.timezone}
+                                    </div>
+                                </div>
+                                <div className="mt-1 text-xs text-slate-500">{schedule.timing_note}</div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {medications.length === 0 && (doseStatus?.routine ?? []).length === 0 ? (
                     <EmptyState title="No medication configured" description="Add a medication to track daily confirmation." />
                 ) : (
                     medications.map((medication) => {
@@ -215,6 +236,23 @@ function MedicationCard({ medications, medicationStatus, doseStatus, googleCalen
                 </form>
             </div>
         </Panel>
+    );
+}
+
+function MedicationItemList({ items = [], fallback }) {
+    if (!items || items.length === 0) {
+        return <div className="text-xs text-slate-500">{fallback}</div>;
+    }
+
+    return (
+        <ul className="mt-1 space-y-1 text-xs text-slate-600">
+            {items.map((item) => (
+                <li key={`${item.name}-${item.timing ?? ''}`}>
+                    <span className="font-medium text-slate-700">{item.name}</span>
+                    {item.timing ? <span> / {item.timing}</span> : null}
+                </li>
+            ))}
+        </ul>
     );
 }
 

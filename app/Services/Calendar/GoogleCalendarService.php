@@ -170,7 +170,7 @@ class GoogleCalendarService
 
         return [
             'summary' => 'Miriam medication reminder',
-            'description' => 'A scheduled dose is due. Open Miriam to confirm Taken, Snooze, or Skip.',
+            'description' => 'A scheduled medication is due. Open Miriam to confirm Taken, Snooze, or Skip.',
             'start' => [
                 'dateTime' => $start->toRfc3339String(),
                 'timeZone' => $timezone,
