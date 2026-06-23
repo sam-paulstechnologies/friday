@@ -138,6 +138,16 @@ class MedicationReminderTest extends TestCase
             ->assertExitCode(2);
     }
 
+    public function test_medication_reminder_command_is_scheduled_every_minute(): void
+    {
+        Artisan::call('schedule:list');
+
+        $output = preg_replace('/\s+/', ' ', Artisan::output());
+
+        $this->assertStringContainsString('* * * * * php artisan miriam:send-medication-reminders', $output);
+        $this->assertStringNotContainsString('*/5 * * * * php artisan miriam:send-medication-reminders', $output);
+    }
+
     public function test_due_reminder_sends_generic_notification_and_records_audit_event(): void
     {
         [$user] = $this->context();
@@ -204,6 +214,36 @@ class MedicationReminderTest extends TestCase
 
         $this->travelToDubai('2026-06-23 09:02:00');
         app(MedicationReminderService::class)->queueDueReminders(sync: true);
+        $this->assertSame(2, $log->fresh()->reminder_attempts);
+    }
+
+    public function test_snoozed_reminder_is_picked_up_within_next_minute(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, ['schedule_time' => '08:30:00']);
+
+        $this->artisan('miriam:send-medication-reminders', [
+            '--sync' => true,
+            '--test-channel' => 'test-database',
+            '--pretend-now' => '2026-06-23 08:31',
+        ])->assertExitCode(0);
+
+        $log = MedicationDoseLog::firstOrFail();
+        $this->travelToDubai('2026-06-23 08:31:00');
+        app(MedicationReminderService::class)->snooze($log, 5, 'test', 'test-database');
+
+        $this->artisan('miriam:send-medication-reminders', [
+            '--sync' => true,
+            '--test-channel' => 'test-database',
+            '--pretend-now' => '2026-06-23 08:35',
+        ])->expectsOutputToContain('0 queued/delivered')->assertExitCode(0);
+        $this->assertSame(1, $log->fresh()->reminder_attempts);
+
+        $this->artisan('miriam:send-medication-reminders', [
+            '--sync' => true,
+            '--test-channel' => 'test-database',
+            '--pretend-now' => '2026-06-23 08:36',
+        ])->expectsOutputToContain('1 queued/delivered')->assertExitCode(0);
         $this->assertSame(2, $log->fresh()->reminder_attempts);
     }
 
