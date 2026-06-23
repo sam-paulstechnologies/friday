@@ -24,8 +24,13 @@ class MiriamDevelopmentApprovalNotifier
         }
 
         $reason ??= $this->reasonForJob($job);
+        $isSafetyGate = $this->isSafetyGate($job, null, $reason);
 
-        if (! $this->isSafetyGate($job, null, $reason)) {
+        if (! $isSafetyGate && $this->isPreQuietModeGate($job)) {
+            return ['sent' => false, 'reason' => 'old_quiet_mode_gate_suppressed'];
+        }
+
+        if (! $isSafetyGate) {
             return ['sent' => false, 'reason' => 'quiet_development_mode'];
         }
 
@@ -49,8 +54,13 @@ class MiriamDevelopmentApprovalNotifier
         }
 
         $reason ??= $this->reasonForFailure($failure);
+        $isSafetyGate = $this->isSafetyGate($failure->job, $failure, $reason);
 
-        if (! $this->isSafetyGate($failure->job, $failure, $reason)) {
+        if (! $isSafetyGate && $this->isPreQuietModeGate($failure->job)) {
+            return ['sent' => false, 'reason' => 'old_quiet_mode_gate_suppressed'];
+        }
+
+        if (! $isSafetyGate) {
             return ['sent' => false, 'reason' => 'quiet_development_mode'];
         }
 
@@ -302,6 +312,15 @@ class MiriamDevelopmentApprovalNotifier
             'temp runner',
             'verification runner',
         ]);
+    }
+
+    private function isPreQuietModeGate(MiriamDevelopmentJob $job): bool
+    {
+        if (! $job->created_at) {
+            return false;
+        }
+
+        return $job->created_at->lessThan(app(MiriamDevelopmentLedgerService::class)->quietModeEnabledAt());
     }
 
     private function textContainsAny(string $text, array $needles): bool

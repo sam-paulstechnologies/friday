@@ -12,6 +12,8 @@ use Illuminate\Support\Collection;
 
 class MiriamDevelopmentLedgerService
 {
+    private const QUIET_MODE_ENABLED_AT = '2026-06-23 00:00:00';
+
     public function recordJob(
         MiriamDevelopmentJob $job,
         string $status,
@@ -28,6 +30,8 @@ class MiriamDevelopmentLedgerService
         $testsRun = $meta['tests_run'] ?? $this->testsFromValidation($validation);
         $blocker = $meta['blocker_reason'] ?? $this->blockerReason($job);
         $commitHash = $meta['commit_hash'] ?? $this->commitFromMeta($phaseRun?->parsedResult() ?: []);
+        $phaseId = $phase?->id;
+        $completedAt = in_array($status, ['completed', 'failed', 'blocked', 'needs_human', 'deployed'], true) ? now() : null;
 
         return MiriamDevelopmentLedger::create([
             'app_id' => $app?->id,
@@ -35,7 +39,7 @@ class MiriamDevelopmentLedgerService
             'master_vision_reference' => $this->masterVisionReference($app, $job),
             'job_id' => $job->id,
             'phase_run_id' => $phaseRun?->id,
-            'phase_id' => $phase?->id,
+            'phase_id' => $phaseId,
             'phase_name' => $phase?->title ?: $phase?->phase_key,
             'status' => $status,
             'summary' => $summary,
@@ -46,7 +50,8 @@ class MiriamDevelopmentLedgerService
             'deployment_status' => $meta['deployment_status'] ?? $this->deploymentStatus($job),
             'blocker_reason' => $blocker,
             'next_action' => $meta['next_action'] ?? $this->nextAction($job, $blocker),
-            'completed_at' => in_array($status, ['completed', 'failed', 'blocked', 'needs_human', 'deployed'], true) ? now() : null,
+            'notification_dedupe_key' => $this->notificationDedupeKey($app?->id, $job->id, $phaseId, $status, $summary),
+            'completed_at' => $completedAt,
         ]);
     }
 
@@ -142,6 +147,64 @@ class MiriamDevelopmentLedgerService
         ]);
     }
 
+    public function notifySummaryIfNeeded(MiriamDevelopmentLedger $ledger): array
+    {
+        $ledger->refresh();
+
+        if (! in_array($ledger->status, ['completed', 'deployed'], true)) {
+            return ['sent' => false, 'reason' => 'ledger_status_not_notifiable'];
+        }
+
+        if ($ledger->summary_notified_at) {
+            return ['sent' => false, 'reason' => 'summary_already_notified'];
+        }
+
+        if ($this->isHistoricalLedger($ledger)) {
+            return ['sent' => false, 'reason' => 'historical_ledger_suppressed'];
+        }
+
+        $key = $ledger->notification_dedupe_key ?: $this->notificationDedupeKey(
+            $ledger->app_id,
+            $ledger->job_id,
+            $ledger->phase_id,
+            $ledger->status,
+            $ledger->summary ?: ''
+        );
+
+        if (! $ledger->notification_dedupe_key) {
+            $ledger->forceFill(['notification_dedupe_key' => $key])->save();
+        }
+
+        $alreadySent = MiriamDevelopmentLedger::query()
+            ->where('notification_dedupe_key', $key)
+            ->whereNotNull('summary_notified_at')
+            ->where('id', '!=', $ledger->id)
+            ->exists();
+
+        if ($alreadySent) {
+            return ['sent' => false, 'reason' => 'durable_duplicate_suppressed'];
+        }
+
+        $summary = $this->developmentSummaryText($ledger->app?->slug);
+        $response = app(MiriamSmartSlackNotificationService::class)->notifyDevelopmentSummary(
+            $ledger->app_name ?: 'Miriam',
+            $summary,
+            $ledger->job_id,
+            $ledger->status,
+            [
+                'phase' => $ledger->phase_id ?: 'none',
+                'summary_hash' => sha1($ledger->summary ?: ''),
+                'notification_dedupe_key' => $key,
+            ]
+        );
+
+        if ($response['sent'] ?? false) {
+            $ledger->forceFill(['summary_notified_at' => now()])->save();
+        }
+
+        return $response + ['notification_dedupe_key' => $key];
+    }
+
     public function blockersText(): string
     {
         $blockers = MiriamDevelopmentLedger::query()
@@ -222,6 +285,11 @@ class MiriamDevelopmentLedgerService
         }
 
         return ['archived' => $archived, 'dry_run' => $dryRun];
+    }
+
+    public function quietModeEnabledAt(): \Illuminate\Support\Carbon
+    {
+        return \Illuminate\Support\Carbon::parse(self::QUIET_MODE_ENABLED_AT, config('app.timezone'));
     }
 
     private function phaseSummary(MiriamDevelopmentJob $job, MiriamDevelopmentPhaseRun $phaseRun): string
@@ -369,5 +437,27 @@ class MiriamDevelopmentLedgerService
         }
 
         return implode(', ', array_slice($files, 0, 5)).(count($files) > 5 ? ' +' . (count($files) - 5).' more' : '');
+    }
+
+    private function notificationDedupeKey(?int $appId, ?int $jobId, ?int $phaseId, string $status, string $summary): string
+    {
+        return sha1(implode(':', [
+            $appId ?: 'none',
+            $jobId ?: 'none',
+            $phaseId ?: 'none',
+            $status,
+            sha1($summary),
+        ]));
+    }
+
+    private function isHistoricalLedger(MiriamDevelopmentLedger $ledger): bool
+    {
+        $quietModeEnabledAt = $this->quietModeEnabledAt();
+
+        if ($ledger->completed_at && $ledger->completed_at->lessThan($quietModeEnabledAt)) {
+            return true;
+        }
+
+        return $ledger->created_at && $ledger->created_at->lessThan($quietModeEnabledAt);
     }
 }

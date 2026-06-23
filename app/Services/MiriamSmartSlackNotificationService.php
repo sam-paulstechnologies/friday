@@ -65,13 +65,14 @@ class MiriamSmartSlackNotificationService
         ]);
     }
 
-    public function notifyDevelopmentSummary(string $app, string $summary, ?int $jobId = null, ?string $status = null): array
+    public function notifyDevelopmentSummary(string $app, string $summary, ?int $jobId = null, ?string $status = null, array $context = []): array
     {
-        return $this->notify('development_summary', $summary, [
+        return $this->notify('development_summary', $summary, array_merge([
             'app' => $app,
             'job_id' => $jobId,
             'status' => $status ?: 'summary',
-        ]);
+            'summary_hash' => sha1($summary),
+        ], $context));
     }
 
     public function notifyDevelopmentBlocked(string $app, string $phase, string $rootCause, ?int $jobId = null): array
@@ -115,6 +116,8 @@ class MiriamSmartSlackNotificationService
             $context['phase'] ?? 'none',
             $context['failure_id'] ?? ($context['failure'] ?? 'none'),
             $context['status'] ?? 'none',
+            $context['summary_hash'] ?? 'none',
+            $context['notification_dedupe_key'] ?? 'none',
         ]));
     }
 }

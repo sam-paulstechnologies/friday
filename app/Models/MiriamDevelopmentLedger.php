@@ -24,6 +24,8 @@ class MiriamDevelopmentLedger extends Model
         'deployment_status',
         'blocker_reason',
         'next_action',
+        'notification_dedupe_key',
+        'summary_notified_at',
         'completed_at',
     ];
 
@@ -31,6 +33,7 @@ class MiriamDevelopmentLedger extends Model
     {
         return [
             'completed_at' => 'datetime',
+            'summary_notified_at' => 'datetime',
         ];
     }
 

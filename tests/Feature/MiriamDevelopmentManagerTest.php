@@ -1677,6 +1677,76 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->assertStringContainsString('Human product decision', $dashboard['blockers'][0]['summary']);
     }
 
+    public function test_historical_ledger_replay_does_not_send_slack_summary(): void
+    {
+        $this->seedSlackContext();
+        Cache::flush();
+        $runner = $this->runner('mra_historical_ledger', ['status' => 'active', 'last_seen_at' => now()]);
+        $job = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram(options: ['runner_agent_id' => $runner->id]);
+        $phaseRun = $job->phaseRuns()->firstOrFail();
+        $ledgerService = app(\App\Services\MiriamDevelopmentLedgerService::class);
+
+        $ledger = $ledgerService->recordJob($job->fresh(), 'completed', 'Backfilled historical completion.', $phaseRun);
+        $oldTime = $ledgerService->quietModeEnabledAt()->subDay();
+        $ledger->forceFill([
+            'created_at' => $oldTime,
+            'completed_at' => $oldTime,
+        ])->saveQuietly();
+
+        $result = $ledgerService->notifySummaryIfNeeded($ledger);
+
+        $this->assertFalse($result['sent']);
+        $this->assertSame('historical_ledger_suppressed', $result['reason']);
+        $this->assertNull($ledger->fresh()->summary_notified_at);
+        Http::assertNothingSent();
+    }
+
+    public function test_completed_ledger_summary_notifies_once_with_durable_dedupe_key(): void
+    {
+        $this->seedSlackContext();
+        Cache::flush();
+        $runner = $this->runner('mra_durable_summary', ['status' => 'active', 'last_seen_at' => now()]);
+        $job = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram(options: ['runner_agent_id' => $runner->id]);
+        $phaseRun = $job->phaseRuns()->firstOrFail();
+        $ledgerService = app(\App\Services\MiriamDevelopmentLedgerService::class);
+
+        $first = $ledgerService->recordJob($job->fresh(), 'completed', 'Completed the same phase summary.', $phaseRun);
+        $second = $ledgerService->recordJob($job->fresh(), 'completed', 'Completed the same phase summary.', $phaseRun);
+
+        $firstResult = $ledgerService->notifySummaryIfNeeded($first);
+        Cache::flush();
+        $secondResult = $ledgerService->notifySummaryIfNeeded($second);
+
+        $this->assertTrue($firstResult['sent']);
+        $this->assertFalse($secondResult['sent']);
+        $this->assertSame('durable_duplicate_suppressed', $secondResult['reason']);
+        $this->assertSame($first->fresh()->notification_dedupe_key, $second->fresh()->notification_dedupe_key);
+        $this->assertNotNull($first->fresh()->summary_notified_at);
+        $this->assertNull($second->fresh()->summary_notified_at);
+        Http::assertSentCount(1);
+    }
+
+    public function test_old_waiting_approval_cards_are_suppressed_after_quiet_mode(): void
+    {
+        $this->seedSlackContext();
+        Cache::flush();
+        $this->runner('mra_old_waiting_gate', ['status' => 'active', 'last_seen_at' => now()]);
+        $job = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram();
+        $job->update([
+            'status' => 'waiting_for_manual_fix',
+            'error_message' => 'Normal stale manual-fix gate.',
+        ]);
+        $job->forceFill([
+            'created_at' => app(\App\Services\MiriamDevelopmentLedgerService::class)->quietModeEnabledAt()->subHour(),
+        ])->saveQuietly();
+
+        $result = app(\App\Services\MiriamDevelopmentApprovalNotifier::class)->notifyJobNeedsAttention($job->fresh(['managedApp', 'runnerAgent']));
+
+        $this->assertFalse($result['sent']);
+        $this->assertSame('old_quiet_mode_gate_suppressed', $result['reason']);
+        Http::assertNothingSent();
+    }
+
     public function test_stale_approval_notices_can_be_archived_without_closing_gate(): void
     {
         $this->runner('mra_stale_notice', ['status' => 'active', 'last_seen_at' => now()]);

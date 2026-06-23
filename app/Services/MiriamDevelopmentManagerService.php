@@ -505,8 +505,8 @@ class MiriamDevelopmentManagerService
         ]);
 
         $this->recordEvent($job, 'job_completed', 'Development job completed', 'All runnable phases are passed or skipped.', $runner);
-        $this->ledger->recordJob($job->fresh(['managedApp', 'program', 'currentPhase', 'releasePackages']), 'completed', 'All runnable phases are passed or skipped.');
-        $this->sendDevelopmentSummary($job->fresh(['managedApp', 'program', 'currentPhase', 'releasePackages']));
+        $ledger = $this->ledger->recordJob($job->fresh(['managedApp', 'program', 'currentPhase', 'releasePackages']), 'completed', 'All runnable phases are passed or skipped.');
+        $this->ledger->notifySummaryIfNeeded($ledger);
 
         return $job->fresh();
     }
@@ -687,7 +687,7 @@ class MiriamDevelopmentManagerService
         $ledger = $this->ledger->recordPhaseResult($job, $phaseRun);
 
         if (in_array($job->status, ['completed', 'waiting_for_approval'], true)) {
-            $this->sendDevelopmentSummary($job);
+            $this->ledger->notifySummaryIfNeeded($ledger);
         }
 
         if (in_array($job->status, ['blocked', 'failed'], true)) {
@@ -698,18 +698,6 @@ class MiriamDevelopmentManagerService
                 $job->id
             );
         }
-    }
-
-    private function sendDevelopmentSummary(MiriamDevelopmentJob $job): void
-    {
-        $appName = $job->managedApp?->name ?: ($job->program?->name ?: 'Miriam');
-
-        app(MiriamSmartSlackNotificationService::class)->notifyDevelopmentSummary(
-            $appName,
-            $this->ledger->developmentSummaryText($job->managedApp?->slug),
-            $job->id,
-            $job->status
-        );
     }
 
     private function parsedResultForPhase(string $stdout, array $data, bool $isDryRun): array
