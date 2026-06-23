@@ -17,7 +17,99 @@ class MiriamBrainService
 
     public function __construct(
         private readonly SmartSlackCaptureParser $parser,
+        private readonly MiriamToolRegistry $tools,
     ) {}
+
+    public function selectTool(string $text, ?User $user = null, ?CarbonImmutable $now = null): array
+    {
+        $now ??= CarbonImmutable::now(self::DEFAULT_TIMEZONE);
+        $normalized = $this->normalizeConversationText($text);
+
+        if ($normalized === '') {
+            return ['intent' => 'ignore', 'tool' => null, 'confidence' => 1.0, 'arguments' => []];
+        }
+
+        if ($this->isExternalSendRequest($normalized)) {
+            return [
+                'intent' => 'approval_required',
+                'tool' => null,
+                'confidence' => 0.9,
+                'risk_level' => 'medium',
+                'message' => 'I can save that as a task, but sending external messages needs confirmation.',
+                'arguments' => [],
+            ];
+        }
+
+        if ($this->isMedicationScheduleChange($normalized)) {
+            return [
+                'intent' => 'approval_required',
+                'tool' => null,
+                'confidence' => 0.95,
+                'risk_level' => 'high',
+                'message' => 'Changing medication schedules needs confirmation in Miriam. I will not change it from Slack.',
+                'arguments' => [],
+            ];
+        }
+
+        if (Str::contains($normalized, ['what does my tomorrow look like', 'tomorrow look like', 'my tomorrow', 'agenda tomorrow', 'tomorrow agenda'])) {
+            return $this->toolSelection('calendar_day_query', 'read_tomorrow_agenda');
+        }
+
+        if (Str::contains($normalized, ['what does my today look like', 'today look like', 'my today', 'agenda today', 'today agenda'])) {
+            return $this->toolSelection('calendar_day_query', 'read_today_agenda');
+        }
+
+        if (Str::contains($normalized, ['show me my meds', 'my meds', 'medication status', 'medicine status', 'dose status', 'evening dose', 'morning dose'])) {
+            return $this->toolSelection('health_status_query', 'read_medication_status', [
+                'dose_key' => Str::contains($normalized, 'evening') ? 'evening' : (Str::contains($normalized, 'morning') ? 'morning' : null),
+            ]);
+        }
+
+        if (Str::contains($normalized, ['what is pending', 'what\'s pending', 'pending tasks', 'pending reminders'])) {
+            return Str::contains($normalized, 'task')
+                ? $this->toolSelection('reminder_list_query', 'list_pending_tasks')
+                : $this->toolSelection('reminder_list_query', 'list_reminders', ['period' => Str::contains($normalized, 'tomorrow') ? 'tomorrow' : 'today']);
+        }
+
+        if (Str::contains($normalized, ['what did codex finish', 'codex finish', 'development status', 'dev status'])) {
+            return $this->toolSelection('development_status_query', 'read_development_status');
+        }
+
+        if (Str::contains($normalized, ['recent miriam activity', 'what did miriam do'])) {
+            return $this->toolSelection('activity_query', 'read_recent_miriam_activity');
+        }
+
+        $items = $this->parser->parse($text, $now);
+        $item = $items[0] ?? null;
+
+        if ($item && count($items) === 1 && ! ($item['needs_clarification'] ?? false) && filled($item['title'] ?? null) && ($item['due_at'] ?? null)) {
+            $dueAt = $item['due_at'] instanceof CarbonImmutable
+                ? $item['due_at']
+                : CarbonImmutable::parse($item['due_at'], $item['timezone'] ?? self::DEFAULT_TIMEZONE);
+
+            if ($dueAt->gt($now) && (float) ($item['confidence'] ?? 0) >= self::MIN_CONFIDENCE) {
+                $tool = in_array(($item['type'] ?? 'reminder'), ['task', 'document_task', 'note', 'follow_up'], true)
+                    ? 'create_task'
+                    : 'create_reminder';
+
+                return [
+                    'intent' => $tool,
+                    'tool' => $tool,
+                    'confidence' => (float) ($item['confidence'] ?? 1),
+                    'risk_level' => (string) ($item['risk_level'] ?? 'low'),
+                    'arguments' => [
+                        'title' => $this->cleanToolTitle((string) $item['title']),
+                        'due_at_local' => $dueAt->format('Y-m-d H:i:s'),
+                        'timezone' => (string) ($item['timezone'] ?? self::DEFAULT_TIMEZONE),
+                        'item_type' => (string) ($item['type'] ?? 'reminder'),
+                        'category' => 'unknown',
+                    ],
+                ];
+            }
+        }
+
+        return ['intent' => 'unclear', 'tool' => null, 'confidence' => 0.3, 'arguments' => []];
+    }
 
     public function interpretSlackCapture(string $text, ?User $user = null, ?CarbonImmutable $now = null): array
     {
@@ -276,6 +368,45 @@ class MiriamBrainService
         return collect($payload)
             ->except(['api_key', 'token', 'secret'])
             ->all();
+    }
+
+    private function toolSelection(string $intent, string $tool, array $arguments = []): array
+    {
+        return [
+            'intent' => $intent,
+            'tool' => $this->tools->get($tool) ? $tool : null,
+            'confidence' => 1.0,
+            'risk_level' => 'low',
+            'arguments' => array_filter($arguments, fn ($value) => $value !== null),
+        ];
+    }
+
+    private function isExternalSendRequest(string $normalized): bool
+    {
+        return preg_match('/\b(send|message|email|whatsapp)\b.+\b(now|right now|immediately|saying|tell|asking)\b/i', $normalized) === 1
+            && ! preg_match('/\b(tomorrow|today|tonight|in \d+ minutes?|at \d{1,2})\b/i', $normalized);
+    }
+
+    private function isMedicationScheduleChange(string $normalized): bool
+    {
+        return Str::contains($normalized, ['change my medication', 'change medication', 'move my dose', 'change my dose', 'medication schedule']);
+    }
+
+    private function normalizeConversationText(string $text): string
+    {
+        return trim((string) Str::of($text)
+            ->lower()
+            ->replaceMatches('/<@[a-z0-9]+>/i', '')
+            ->replaceMatches('/^@miriam[:,]?\s*/i', '')
+            ->replaceMatches('/^miriam[:,]?\s*/i', '')
+            ->replaceMatches('/\s+/', ' '));
+    }
+
+    private function cleanToolTitle(string $title): string
+    {
+        return trim((string) Str::of($title)
+            ->replaceMatches('/^remind me\s+(?:to\s+)?/i', '')
+            ->ucfirst());
     }
 
     private function systemPrompt(): string

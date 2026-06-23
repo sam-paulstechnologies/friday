@@ -2,34 +2,81 @@
 
 namespace App\Services\Miriam;
 
-use App\Models\CalendarEventMapping;
-use App\Models\MedicationDoseLog;
-use App\Models\MiriamReminder;
-use App\Models\MiriamSlackConversationContext;
 use App\Models\User;
-use Carbon\CarbonImmutable;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 class MiriamSlackConversationRouter
 {
     public const DEFAULT_TIMEZONE = 'Asia/Dubai';
 
+    public function __construct(
+        private readonly MiriamBrainService $brain,
+        private readonly MiriamToolExecutor $tools,
+    ) {}
+
     public function route(string $text, string $slackUserId, string $channelId, ?User $user = null): array
     {
         $intent = $this->classify($text);
 
+        if ($intent === 'answer_clarification') {
+            return ['handled' => false, 'intent' => $intent];
+        }
+
+        if ($intent === 'show_last_result') {
+            return $this->showLastResult($slackUserId, $channelId);
+        }
+
+        if ($move = $this->moveThatClarification($text, $slackUserId, $channelId, $user)) {
+            return $move;
+        }
+
+        if ($done = $this->markRecentReminderDone($text, $slackUserId, $channelId, $user)) {
+            return $done;
+        }
+
+        $selection = $this->brain->selectTool($text, $user);
+
+        if (($selection['intent'] ?? null) === 'approval_required') {
+            $this->tools->audit('approval_required', null, ['text' => $text], [
+                'message' => $selection['message'] ?? 'Confirmation required.',
+            ], $this->toolContext($slackUserId, $channelId, $user, $text, $selection), 'approval_required');
+
+            return [
+                'handled' => true,
+                'intent' => 'approval_required',
+                'text' => $selection['message'] ?? 'I need confirmation before doing that.',
+            ];
+        }
+
+        $tool = $selection['tool'] ?? null;
+
+        if (in_array($tool, ['create_reminder', 'create_task'], true) && ! Str::contains($this->normalize($text), 'tomorrow morning')) {
+            return ['handled' => false, 'intent' => (string) ($selection['intent'] ?? $intent)];
+        }
+
+        if ($tool) {
+            $result = $this->tools->execute(
+                (string) $tool,
+                $selection['arguments'] ?? [],
+                $this->toolContext($slackUserId, $channelId, $user, $text, $selection),
+            );
+
+            $this->tools->storeContext($slackUserId, $channelId, $user, $result);
+
+            return [
+                'handled' => true,
+                'intent' => (string) ($selection['intent'] ?? $tool),
+                'text' => $result['message'] ?? 'Done.',
+            ];
+        }
+
         return match ($intent) {
-            'calendar_day_query' => $this->tomorrowAgenda($slackUserId, $channelId, $user),
-            'reminder_list_query' => $this->reminderList($text, $slackUserId, $channelId, $user),
-            'health_status_query' => $this->healthStatus($text, $slackUserId, $channelId, $user),
-            'show_last_result' => $this->showLastResult($slackUserId, $channelId),
+            'ignore' => ['handled' => true, 'intent' => $intent, 'text' => ''],
             'general_question', 'unclear' => [
                 'handled' => true,
                 'intent' => $intent,
-                'text' => 'I can show your agenda, list reminders, or save a reminder. What would you like to see or create?',
+                'text' => 'What would you like me to show or save?',
             ],
-            'ignore' => ['handled' => true, 'intent' => $intent, 'text' => ''],
             default => ['handled' => false, 'intent' => $intent],
         };
     }
@@ -73,84 +120,9 @@ class MiriamSlackConversationRouter
         return 'unclear';
     }
 
-    private function tomorrowAgenda(string $slackUserId, string $channelId, ?User $user): array
-    {
-        $timezone = self::DEFAULT_TIMEZONE;
-        $start = CarbonImmutable::now($timezone)->addDay()->startOfDay();
-        $end = $start->endOfDay();
-        $reminders = $this->remindersBetween($user, $start, $end);
-        $events = $this->calendarEventsBetween($user, $start, $end);
-
-        $summary = $this->agendaSummary('Tomorrow', $events, $reminders);
-        $detail = $this->agendaDetail('Tomorrow', $events, $reminders);
-
-        $this->storeContext($slackUserId, $channelId, $user, 'agenda', $summary, $detail, [
-            'date' => $start->toDateString(),
-            'event_count' => $events->count(),
-            'reminder_count' => $reminders->count(),
-        ]);
-
-        return ['handled' => true, 'intent' => 'calendar_day_query', 'text' => $summary];
-    }
-
-    private function reminderList(string $text, string $slackUserId, string $channelId, ?User $user): array
-    {
-        $timezone = self::DEFAULT_TIMEZONE;
-        $normalized = $this->normalize($text);
-        $start = Str::contains($normalized, 'tomorrow')
-            ? CarbonImmutable::now($timezone)->addDay()->startOfDay()
-            : CarbonImmutable::now($timezone)->startOfDay();
-        $end = $start->endOfDay();
-        $reminders = $this->remindersBetween($user, $start, $end);
-        $label = $start->isSameDay(CarbonImmutable::now($timezone)->addDay()) ? 'Tomorrow' : 'Today';
-        $summary = $reminders->isEmpty()
-            ? "{$label}: no Miriam reminders found."
-            : "{$label} reminders:\n".$reminders->map(fn (MiriamReminder $reminder): string => '- '.$this->localTime($reminder->due_at, $timezone).' - '.$reminder->title)->implode("\n");
-
-        $this->storeContext($slackUserId, $channelId, $user, 'reminders', $summary, $summary, [
-            'date' => $start->toDateString(),
-            'reminder_count' => $reminders->count(),
-        ]);
-
-        return ['handled' => true, 'intent' => 'reminder_list_query', 'text' => $summary];
-    }
-
-    private function healthStatus(string $text, string $slackUserId, string $channelId, ?User $user): array
-    {
-        if (! $user) {
-            return ['handled' => true, 'intent' => 'health_status_query', 'text' => 'I could not find your Miriam user for health status.'];
-        }
-
-        $timezone = self::DEFAULT_TIMEZONE;
-        $today = CarbonImmutable::now($timezone)->toDateString();
-        $doseKey = Str::contains($this->normalize($text), 'evening') ? 'evening' : (Str::contains($this->normalize($text), 'morning') ? 'morning' : null);
-        $logs = MedicationDoseLog::query()
-            ->with('schedule')
-            ->where('user_id', $user->id)
-            ->whereDate('dose_date', $today)
-            ->get()
-            ->filter(fn (MedicationDoseLog $log): bool => ! $doseKey || $log->schedule?->dose_key === $doseKey)
-            ->values();
-
-        $message = $logs->isEmpty()
-            ? 'No medication dose log found for that status today.'
-            : $logs->map(fn (MedicationDoseLog $log): string => ($log->schedule?->label ?: ucfirst((string) $log->schedule?->dose_key)).': '.$log->status)->implode("\n");
-
-        $this->storeContext($slackUserId, $channelId, $user, 'health_status', $message, $message, ['dose_key' => $doseKey]);
-
-        return ['handled' => true, 'intent' => 'health_status_query', 'text' => $message];
-    }
-
     private function showLastResult(string $slackUserId, string $channelId): array
     {
-        $context = MiriamSlackConversationContext::query()
-            ->where('slack_user_id', $slackUserId)
-            ->where('slack_channel_id', $channelId)
-            ->where(function ($query): void {
-                $query->whereNull('expires_at')->orWhere('expires_at', '>', CarbonImmutable::now('UTC'));
-            })
-            ->latest()
-            ->first();
+        $context = $this->tools->latestContext($slackUserId, $channelId);
 
         if (! $context) {
             return ['handled' => true, 'intent' => 'show_last_result', 'text' => 'What would you like me to show: tomorrow agenda, reminders, or health status?'];
@@ -159,99 +131,66 @@ class MiriamSlackConversationRouter
         return ['handled' => true, 'intent' => 'show_last_result', 'text' => $context->detail ?: $context->summary ?: 'I do not have details to show yet.'];
     }
 
-    private function remindersBetween(?User $user, CarbonImmutable $start, CarbonImmutable $end): Collection
+    private function moveThatClarification(string $text, string $slackUserId, string $channelId, ?User $user): ?array
     {
-        return MiriamReminder::query()
-            ->when($user, fn ($query) => $query->where('user_id', $user->id))
-            ->whereNotIn('status', ['done', 'cancelled'])
-            ->whereBetween('due_at', [$start->utc(), $end->utc()])
-            ->orderBy('due_at')
-            ->get();
+        if (! preg_match('/\b(move|reschedule)\s+(that|it)\s+to\s+(\d{1,2})(?::\d{2})?\b/i', $this->normalize($text), $matches)) {
+            return null;
+        }
+
+        $context = $this->tools->latestContext($slackUserId, $channelId, 'reminder');
+
+        if (! $context || ! ($context->payload['reminder_id'] ?? null)) {
+            return ['handled' => true, 'intent' => 'unclear', 'text' => 'Which reminder should I move?'];
+        }
+
+        if (! preg_match('/\b(am|pm|a\.m\.|p\.m\.)\b/i', $text)) {
+            $this->tools->audit('approval_required', 'update_reminder_status', ['text' => $text], [
+                'message' => 'Do you mean 10 AM or 10 PM?',
+            ], $this->toolContext($slackUserId, $channelId, $user, $text, ['intent' => 'reschedule_reminder']), 'needs_clarification');
+
+            return ['handled' => true, 'intent' => 'unclear', 'text' => 'Do you mean '.$matches[3].' AM or '.$matches[3].' PM?'];
+        }
+
+        return ['handled' => true, 'intent' => 'unclear', 'text' => 'I can reschedule reminders after confirmation support is added for time changes.'];
     }
 
-    private function calendarEventsBetween(?User $user, CarbonImmutable $start, CarbonImmutable $end): Collection
+    private function markRecentReminderDone(string $text, string $slackUserId, string $channelId, ?User $user): ?array
     {
-        if (! $user) {
-            return collect();
+        if (! preg_match('/\b(mark|set)\s+(that|it)\s+(done|complete|completed)\b/i', $this->normalize($text))) {
+            return null;
         }
 
-        return CalendarEventMapping::query()
-            ->where('user_id', $user->id)
-            ->where('provider', 'google')
-            ->get()
-            ->filter(function (CalendarEventMapping $mapping) use ($start, $end): bool {
-                $metadata = $mapping->metadata ?? [];
-                $date = $metadata['date'] ?? $metadata['start_date'] ?? null;
+        $context = $this->tools->latestContext($slackUserId, $channelId, 'reminder');
+        $reminderId = (int) ($context?->payload['reminder_id'] ?? 0);
 
-                return is_string($date) && $date >= $start->toDateString() && $date <= $end->toDateString();
-            })
-            ->sortBy(fn (CalendarEventMapping $mapping): string => (string) (($mapping->metadata ?? [])['date'] ?? ''))
-            ->values();
+        if (! $reminderId) {
+            return ['handled' => true, 'intent' => 'update_reminder_status', 'text' => 'Which reminder should I mark done?'];
+        }
+
+        $result = $this->tools->execute('update_reminder_status', [
+            'reminder_id' => $reminderId,
+            'status' => 'done',
+        ], $this->toolContext($slackUserId, $channelId, $user, $text, [
+            'intent' => 'update_reminder_status',
+            'confidence' => 1.0,
+            'risk_level' => 'low',
+        ]));
+
+        $this->tools->storeContext($slackUserId, $channelId, $user, $result);
+
+        return ['handled' => true, 'intent' => 'update_reminder_status', 'text' => $result['message'] ?? 'Done.'];
     }
 
-    private function agendaSummary(string $label, Collection $events, Collection $reminders): string
+    private function toolContext(string $slackUserId, string $channelId, ?User $user, string $text, array $selection): array
     {
-        if ($events->isEmpty() && $reminders->isEmpty()) {
-            return "{$label}: no calendar events or Miriam reminders found.";
-        }
-
-        $parts = [];
-
-        if ($events->isNotEmpty()) {
-            $parts[] = $events->count().' calendar '.Str::plural('event', $events->count());
-        }
-
-        if ($reminders->isNotEmpty()) {
-            $parts[] = $reminders->count().' Miriam '.Str::plural('reminder', $reminders->count());
-        }
-
-        return "{$label}: ".implode(', ', $parts).". Reply \"show me\" for details.";
-    }
-
-    private function agendaDetail(string $label, Collection $events, Collection $reminders): string
-    {
-        $lines = ["{$label} agenda:"];
-
-        if ($events->isEmpty()) {
-            $lines[] = 'Calendar: none found.';
-        } else {
-            $lines[] = 'Calendar:';
-            foreach ($events as $event) {
-                $metadata = $event->metadata ?? [];
-                $time = $metadata['time'] ?? $metadata['start_time'] ?? null;
-                $lines[] = '- '.($time ? $time.' - ' : '').($metadata['title'] ?? 'Calendar event');
-            }
-        }
-
-        if ($reminders->isEmpty()) {
-            $lines[] = 'Miriam reminders: none found.';
-        } else {
-            $lines[] = 'Miriam reminders:';
-            foreach ($reminders as $reminder) {
-                $lines[] = '- '.$this->localTime($reminder->due_at, $reminder->timezone ?: self::DEFAULT_TIMEZONE).' - '.$reminder->title;
-            }
-        }
-
-        return implode("\n", $lines);
-    }
-
-    private function storeContext(string $slackUserId, string $channelId, ?User $user, string $type, string $summary, string $detail, array $payload = []): void
-    {
-        MiriamSlackConversationContext::create([
-            'user_id' => $user?->id,
+        return [
+            'user' => $user,
             'slack_user_id' => $slackUserId,
             'slack_channel_id' => $channelId,
-            'context_type' => $type,
-            'summary' => $summary,
-            'detail' => $detail,
-            'payload' => $payload,
-            'expires_at' => CarbonImmutable::now('UTC')->addHours(6),
-        ]);
-    }
-
-    private function localTime($value, string $timezone): string
-    {
-        return CarbonImmutable::parse($value)->setTimezone($timezone)->format('g:i A');
+            'original_text' => $text,
+            'confidence' => $selection['confidence'] ?? 1.0,
+            'risk_level' => $selection['risk_level'] ?? 'low',
+        ];
     }
 
     private function normalize(string $text): string
