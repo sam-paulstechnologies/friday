@@ -15,7 +15,7 @@ class MiriamReminderService
     public function parse(string $text, ?CarbonImmutable $now = null): ?array
     {
         $now ??= CarbonImmutable::now(self::DEFAULT_TIMEZONE);
-        $normalized = trim(preg_replace('/\s+/', ' ', Str::of($text)->lower()->replaceMatches('/^miriam,?\s*/', '')->toString()));
+        $normalized = $this->normalizeReminderText($text);
 
         if (! str_starts_with($normalized, 'remind me ')) {
             return null;
@@ -24,6 +24,18 @@ class MiriamReminderService
         if (preg_match('/^remind me in (\d+) minutes? to (.+)$/i', $normalized, $matches)) {
             $minutes = max(1, (int) $matches[1]);
             $title = $this->cleanTitle($matches[2]);
+
+            return [
+                'title' => $title,
+                'due_at' => $now->addMinutes($minutes),
+                'timezone' => self::DEFAULT_TIMEZONE,
+                'category' => $this->categoryFor($title),
+            ];
+        }
+
+        if (preg_match('/^remind me to (.+?) in (\d+) minutes?$/i', $normalized, $matches)) {
+            $title = $this->cleanTitle($matches[1]);
+            $minutes = max(1, (int) $matches[2]);
 
             return [
                 'title' => $title,
@@ -106,10 +118,18 @@ class MiriamReminderService
         return $this->sendSlack(
             $reminder->slack_channel_id,
             sprintf(
-                'Reminder saved: %s at %s.',
+                'Saved reminder: %s at %s.',
                 $reminder->title,
                 $reminder->due_at->setTimezone($reminder->timezone)->format('M j, g:i A')
             )
+        );
+    }
+
+    public function sendParseHelp(string $channel): array
+    {
+        return $this->sendSlack(
+            $channel,
+            'I can save reminders like: Remind me to call Jasion in 5 minutes.'
         );
     }
 
@@ -217,6 +237,16 @@ class MiriamReminderService
         $parsed = CarbonImmutable::parse($date->toDateString().' '.$time, self::DEFAULT_TIMEZONE);
 
         return $date->setTime((int) $parsed->format('H'), (int) $parsed->format('i'));
+    }
+
+    private function normalizeReminderText(string $text): string
+    {
+        return trim(preg_replace('/\s+/', ' ', Str::of($text)
+            ->lower()
+            ->replaceMatches('/<@[a-z0-9]+>/i', '')
+            ->replaceMatches('/^@miriam[:,]?\s*/i', '')
+            ->replaceMatches('/^miriam[:,]?\s*/i', '')
+            ->toString()));
     }
 
     private function cleanTitle(string $title): string

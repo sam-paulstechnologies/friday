@@ -11,6 +11,7 @@ use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 class MiriamReminderTest extends TestCase
@@ -78,12 +79,92 @@ class MiriamReminderTest extends TestCase
 
         $this->assertSame('pay dewa', $reminder->title);
         $this->assertSame('personal', $reminder->category);
-        $this->assertSame('CSOURCE', $reminder->slack_channel_id);
+        $this->assertSame('CMIRIAM', $reminder->slack_channel_id);
         $this->assertSame('2026-06-24 06:00:00', $reminder->due_at->format('Y-m-d H:i:s'));
 
         Http::assertSent(fn ($request) => $request->url() === 'https://slack.com/api/chat.postMessage'
             && $request['channel'] === 'CMIRIAM'
-            && str_contains($request['text'], 'Reminder saved: pay dewa'));
+            && str_contains($request['text'], 'Saved reminder: pay dewa'));
+    }
+
+    public function test_private_channel_message_creates_reminder(): void
+    {
+        Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
+
+        $this->postSignedSlackEvent('Remind me to call Jasion in 5 minutes', [
+            'event' => ['type' => 'message.groups', 'channel_type' => 'group'],
+        ])->assertOk();
+
+        $reminder = MiriamReminder::firstOrFail();
+
+        $this->assertSame('call jasion', $reminder->title);
+        $this->assertSame('2026-06-23 08:05:00', $reminder->due_at->format('Y-m-d H:i:s'));
+    }
+
+    public function test_app_mention_creates_reminder_and_strips_mention_token(): void
+    {
+        Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
+
+        $this->postSignedSlackEvent('<@U999BOT> remind me to call Jasion in 5 minutes', [
+            'event' => ['type' => 'app_mention'],
+        ])->assertOk();
+
+        $this->assertSame('call jasion', MiriamReminder::firstOrFail()->title);
+
+        Http::assertSent(fn ($request) => $request['text'] === 'Saved reminder: call jasion at Jun 23, 12:05 PM.');
+    }
+
+    public function test_named_mention_is_stripped_before_parsing(): void
+    {
+        Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
+
+        $this->postSignedSlackEvent('@Miriam remind me to call Jasion in 5 minutes')->assertOk();
+
+        $this->assertSame('call jasion', MiriamReminder::firstOrFail()->title);
+    }
+
+    public function test_wrong_channel_is_ignored_with_logged_reason(): void
+    {
+        Log::spy();
+        Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
+
+        $this->postSignedSlackEvent('Remind me to call Jasion in 5 minutes', [
+            'event' => ['channel' => 'CWRONG'],
+        ])
+            ->assertOk()
+            ->assertJson(['ignored' => 'wrong_channel']);
+
+        $this->assertDatabaseCount('miriam_reminders', 0);
+        Http::assertNothingSent();
+        Log::shouldHaveReceived('info')->withArgs(fn ($message, $context) => $message === 'Miriam Slack event processed.'
+            && ($context['channel_id'] ?? null) === 'CWRONG'
+            && ($context['ignored_reason'] ?? null) === 'wrong_channel');
+    }
+
+    public function test_parse_failure_replies_with_example_format(): void
+    {
+        Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
+
+        $this->postSignedSlackEvent('please remember Jasion sometime')->assertOk()
+            ->assertJson(['ignored' => 'not_a_reminder']);
+
+        $this->assertDatabaseCount('miriam_reminders', 0);
+        Http::assertSent(fn ($request) => $request['channel'] === 'CMIRIAM'
+            && $request['text'] === 'I can save reminders like: Remind me to call Jasion in 5 minutes.');
+    }
+
+    public function test_bot_messages_are_ignored_safely(): void
+    {
+        Http::fake(['slack.com/*' => Http::response(['ok' => true])]);
+
+        $this->postSignedSlackEvent('Remind me to call Jasion in 5 minutes', [
+            'event' => ['bot_id' => 'B123', 'subtype' => 'bot_message'],
+        ])
+            ->assertOk()
+            ->assertJson(['ignored' => 'bot_message']);
+
+        $this->assertDatabaseCount('miriam_reminders', 0);
+        Http::assertNothingSent();
     }
 
     public function test_due_reminder_delivery_uses_done_snooze_and_cancel_buttons(): void
@@ -171,7 +252,9 @@ class MiriamReminderTest extends TestCase
         ])->postJson(route('slack.events'), ['event' => ['text' => 'Remind me in 30 minutes to check the oven']])
             ->assertStatus(401);
 
-        $this->postSignedSlackEvent('Remind me in 30 minutes to check the oven', ['X-Slack-Retry-Num' => '1'])
+        $this->postSignedSlackEvent('Remind me in 30 minutes to check the oven', [
+            'headers' => ['X-Slack-Retry-Num' => '1'],
+        ])
             ->assertOk()
             ->assertJson(['ignored' => 'retry']);
 
@@ -225,15 +308,18 @@ class MiriamReminderTest extends TestCase
         });
     }
 
-    private function postSignedSlackEvent(string $text, array $headers = [])
+    private function postSignedSlackEvent(string $text, array $overrides = [])
     {
+        $headers = $overrides['headers'] ?? [];
+        $eventOverrides = $overrides['event'] ?? [];
         $payload = json_encode([
-            'event' => [
-                'channel' => 'CSOURCE',
+            'event' => array_merge([
+                'type' => 'message',
+                'channel' => 'CMIRIAM',
                 'user' => 'U123',
                 'text' => $text,
                 'ts' => '1710000000.000100',
-            ],
+            ], $eventOverrides),
         ]);
         $timestamp = (string) time();
         $signature = 'v0='.hash_hmac('sha256', "v0:{$timestamp}:{$payload}", 'test-signing-secret');
