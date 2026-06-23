@@ -36,6 +36,22 @@ class SendMedicationReminders extends Command
             $testChannel
         );
 
+        if ($this->output->isVeryVerbose()) {
+            $this->line('Medication reminder debug:');
+            $this->line('  current UTC time: '.($result['current_utc'] ?? $now->utc()->toDateTimeString()));
+            $this->line('  due candidate count: '.($result['due_candidate_count'] ?? 0));
+
+            foreach ($result['skipped'] ?? [] as $skipped) {
+                $this->line(sprintf(
+                    '  skipped dose_log_id=%s status=%s next_reminder_at=%s reason=%s',
+                    $skipped['dose_log_id'] ?? 'unknown',
+                    $skipped['status'] ?? 'unknown',
+                    $skipped['next_reminder_at'] ?? 'null',
+                    $skipped['reason'] ?? 'unknown'
+                ));
+            }
+        }
+
         $this->info(sprintf(
             'Medication reminders processed: %d queued/delivered, %d quiet-hour suppressed.',
             $result['queued'],

@@ -20,6 +20,7 @@ class MedicationReminderService
 {
     public const DEFAULT_TIMEZONE = 'Asia/Dubai';
     public const ACKNOWLEDGED_STATUSES = ['taken', 'skipped'];
+    public const DUE_REMINDER_STATUSES = ['pending', 'overdue', 'snoozed', 'critical_overdue'];
     private const MORNING_DEADLINE_TIME = '10:00:00';
     private const CRITICAL_REPEAT_MINUTES = 5;
     private const WEDNESDAY_ISO = 3;
@@ -159,27 +160,43 @@ class MedicationReminderService
 
     public function queueDueReminders(?CarbonImmutable $now = null, bool $sync = false, ?string $channel = null): array
     {
-        $now ??= CarbonImmutable::now('UTC');
+        $now = ($now ?? CarbonImmutable::now('UTC'))->utc();
+        $nowUtc = $now->toDateTimeString();
+
         $this->ensureLogsForActiveSchedules($now);
 
         $logs = MedicationDoseLog::query()
             ->with(['schedule', 'user'])
-            ->whereIn('status', ['pending', 'snoozed', 'overdue', 'critical_overdue'])
+            ->whereIn('status', self::DUE_REMINDER_STATUSES)
             ->whereNotNull('next_reminder_at')
-            ->where('next_reminder_at', '<=', $now)
+            ->where('next_reminder_at', '<=', $nowUtc)
             ->get();
 
         $queued = 0;
         $suppressed = 0;
+        $skipped = [];
 
         foreach ($logs as $log) {
             if (! $log->schedule || ! $log->user) {
+                $skipped[] = [
+                    'dose_log_id' => $log->id,
+                    'status' => $log->status,
+                    'next_reminder_at' => $log->next_reminder_at?->utc()?->toDateTimeString(),
+                    'reason' => ! $log->schedule ? 'missing schedule' : 'missing user',
+                ];
+
                 continue;
             }
 
             if ($this->isQuietTime($log->schedule, $now)) {
                 $this->suppressForQuietHours($log, $now);
                 $suppressed++;
+                $skipped[] = [
+                    'dose_log_id' => $log->id,
+                    'status' => $log->status,
+                    'next_reminder_at' => $log->next_reminder_at?->utc()?->toDateTimeString(),
+                    'reason' => 'quiet hours',
+                ];
                 continue;
             }
 
@@ -193,7 +210,13 @@ class MedicationReminderService
             $this->recordEvent($log, 'reminder_queued', $channel ?: $log->schedule->default_channel);
         }
 
-        return ['queued' => $queued, 'quiet_hours_suppressed' => $suppressed];
+        return [
+            'queued' => $queued,
+            'quiet_hours_suppressed' => $suppressed,
+            'due_candidate_count' => $logs->count(),
+            'current_utc' => $nowUtc,
+            'skipped' => $skipped,
+        ];
     }
 
     public function deliverReminder(int $doseLogId, string $channel = 'database', ?CarbonImmutable $now = null): ?MedicationDoseLog

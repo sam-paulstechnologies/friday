@@ -174,6 +174,157 @@ class MedicationReminderTest extends TestCase
         ]);
     }
 
+    public function test_overdue_dose_with_past_next_reminder_is_sent_using_utc_due_query(): void
+    {
+        [$user] = $this->context();
+        $schedule = $this->schedule($user, [
+            'dose_key' => 'evening',
+            'label' => 'Evening medication',
+            'schedule_time' => '21:30:00',
+            'quiet_hours_start' => null,
+            'quiet_hours_end' => null,
+        ]);
+
+        MedicationDoseLog::create([
+            'dose_schedule_id' => $schedule->id,
+            'user_id' => $user->id,
+            'workspace_id' => $schedule->workspace_id,
+            'dose_date' => '2026-06-23',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-23 17:30:00', 'UTC'),
+            'scheduled_timezone' => 'Asia/Dubai',
+            'status' => 'overdue',
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-23 18:01:00', 'UTC'),
+        ]);
+
+        $result = app(MedicationReminderService::class)->queueDueReminders(
+            CarbonImmutable::parse('2026-06-23 18:01:57', 'UTC'),
+            sync: true,
+            channel: 'test-database'
+        );
+
+        $log = MedicationDoseLog::firstOrFail();
+
+        $this->assertSame(1, $result['due_candidate_count']);
+        $this->assertSame('2026-06-23 18:01:57', $result['current_utc']);
+        $this->assertSame(1, $result['queued']);
+        $this->assertSame(1, $log->fresh()->reminder_attempts);
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $log->id,
+            'event_type' => 'reminder_sent',
+            'channel' => 'test-database',
+        ]);
+    }
+
+    public function test_overdue_dose_with_future_next_reminder_is_not_sent(): void
+    {
+        [$user] = $this->context();
+        $schedule = $this->schedule($user, [
+            'dose_key' => 'evening',
+            'label' => 'Evening medication',
+            'schedule_time' => '21:30:00',
+            'quiet_hours_start' => null,
+            'quiet_hours_end' => null,
+        ]);
+
+        MedicationDoseLog::create([
+            'dose_schedule_id' => $schedule->id,
+            'user_id' => $user->id,
+            'workspace_id' => $schedule->workspace_id,
+            'dose_date' => '2026-06-23',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-23 17:30:00', 'UTC'),
+            'scheduled_timezone' => 'Asia/Dubai',
+            'status' => 'overdue',
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-23 18:02:00', 'UTC'),
+        ]);
+
+        $result = app(MedicationReminderService::class)->queueDueReminders(
+            CarbonImmutable::parse('2026-06-23 18:01:57', 'UTC'),
+            sync: true,
+            channel: 'test-database'
+        );
+
+        $this->assertSame(0, $result['due_candidate_count']);
+        $this->assertSame(0, $result['queued']);
+        $this->assertSame(0, MedicationDoseLog::firstOrFail()->fresh()->reminder_attempts);
+        $this->assertDatabaseMissing('medication_reminder_events', [
+            'event_type' => 'reminder_sent',
+        ]);
+    }
+
+    public function test_pending_dose_due_now_is_sent(): void
+    {
+        [$user] = $this->context();
+        $schedule = $this->schedule($user, [
+            'schedule_time' => '08:30:00',
+            'quiet_hours_start' => null,
+            'quiet_hours_end' => null,
+        ]);
+
+        MedicationDoseLog::create([
+            'dose_schedule_id' => $schedule->id,
+            'user_id' => $user->id,
+            'workspace_id' => $schedule->workspace_id,
+            'dose_date' => '2026-06-23',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-23 04:30:00', 'UTC'),
+            'scheduled_timezone' => 'Asia/Dubai',
+            'status' => 'pending',
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-23 04:30:00', 'UTC'),
+        ]);
+
+        $result = app(MedicationReminderService::class)->queueDueReminders(
+            CarbonImmutable::parse('2026-06-23 04:30:00', 'UTC'),
+            sync: true,
+            channel: 'test-database'
+        );
+
+        $this->assertSame(1, $result['due_candidate_count']);
+        $this->assertSame(1, $result['queued']);
+        $this->assertSame(1, MedicationDoseLog::firstOrFail()->fresh()->reminder_attempts);
+    }
+
+    public function test_taken_and_skipped_doses_are_ignored_by_due_query(): void
+    {
+        [$user] = $this->context();
+        $takenSchedule = $this->schedule($user, [
+            'dose_key' => 'morning_taken',
+            'schedule_time' => '08:30:00',
+            'quiet_hours_start' => null,
+            'quiet_hours_end' => null,
+        ]);
+        $skippedSchedule = $this->schedule($user, [
+            'dose_key' => 'morning_skipped',
+            'schedule_time' => '09:30:00',
+            'quiet_hours_start' => null,
+            'quiet_hours_end' => null,
+        ]);
+
+        foreach ([[$takenSchedule, 'taken'], [$skippedSchedule, 'skipped']] as [$schedule, $status]) {
+            MedicationDoseLog::create([
+                'dose_schedule_id' => $schedule->id,
+                'user_id' => $user->id,
+                'workspace_id' => $schedule->workspace_id,
+                'dose_date' => '2026-06-23',
+                'scheduled_for' => CarbonImmutable::parse('2026-06-23 04:30:00', 'UTC'),
+                'scheduled_timezone' => 'Asia/Dubai',
+                'status' => $status,
+                'next_reminder_at' => CarbonImmutable::parse('2026-06-23 04:00:00', 'UTC'),
+            ]);
+        }
+
+        $result = app(MedicationReminderService::class)->queueDueReminders(
+            CarbonImmutable::parse('2026-06-23 05:00:00', 'UTC'),
+            sync: true,
+            channel: 'test-database'
+        );
+
+        $this->assertSame(0, $result['due_candidate_count']);
+        $this->assertSame(0, $result['queued']);
+        $this->assertSame(0, MedicationDoseLog::query()->sum('reminder_attempts'));
+        $this->assertDatabaseMissing('medication_reminder_events', [
+            'event_type' => 'reminder_sent',
+        ]);
+    }
+
     public function test_reminders_repeat_until_taken_and_stop_after_acknowledgement(): void
     {
         [$user] = $this->context();
