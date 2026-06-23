@@ -633,21 +633,22 @@ class MedicationReminderTest extends TestCase
         $this->assertSame(1, MedicationDoseLog::firstOrFail()->events()->where('event_type', 'slack_reminder_sent')->count());
     }
 
-    public function test_medication_reminder_creates_private_google_calendar_event_when_connected(): void
+    public function test_medication_reminder_creates_private_google_calendar_event_with_morning_medication_details(): void
     {
         [$user, $workspace] = $this->context();
-        $this->connection($user, $workspace);
+        $connection = $this->connection($user, $workspace);
+        $connection->forceFill(['token_expires_at' => Carbon::parse('2026-06-24 00:00:00', 'Asia/Dubai')])->save();
         $this->enableGoogleCalendar();
-        $this->schedule($user, ['schedule_time' => '08:30:00']);
+        $this->schedule($user, ['schedule_time' => '09:00:00']);
         Http::fake([
             'https://www.googleapis.com/calendar/v3/calendars/primary/events' => Http::response([
                 'id' => 'google-med-dose-1',
-                'summary' => 'Miriam medication reminder',
-                'start' => ['dateTime' => '2026-06-23T08:30:00+04:00'],
+                'summary' => "Sam's Medication - Morning",
+                'start' => ['dateTime' => '2026-06-23T09:00:00+04:00'],
                 'organizer' => ['email' => 'primary'],
             ], 200),
         ]);
-        $this->travelToDubai('2026-06-23 08:31:00');
+        $this->travelToDubai('2026-06-23 09:01:00');
 
         app(MedicationReminderService::class)->queueDueReminders(sync: true);
 
@@ -656,10 +657,9 @@ class MedicationReminderTest extends TestCase
 
             return $request->method() === 'POST'
                 && str_contains($request->url(), '/calendar/v3/calendars/primary/events')
-                && $payload['summary'] === 'Miriam medication reminder'
-                && $payload['description'] === 'A scheduled medication is due. Open Miriam to confirm Taken, Snooze, or Skip.'
-                && ! str_contains(json_encode($payload), 'Xigduo')
-                && ! str_contains(json_encode($payload), 'after breakfast')
+                && $payload['summary'] === "Sam's Medication - Morning"
+                && $payload['description'] === "Medication due:\n- Xigduo XR 5mg/1000mg\n- Physiotens 0.2mg\n- Lodiva 10mg/160mg\n- Aterpen 10mg/20mg\n\nConfirm Taken, Snooze, or Skip in Miriam/Slack."
+                && $payload['visibility'] === 'private'
                 && ($payload['extendedProperties']['private']['miriam_source'] ?? null) === 'medication_reminder';
         });
         $this->assertDatabaseHas('calendar_event_mappings', [
@@ -671,6 +671,94 @@ class MedicationReminderTest extends TestCase
             'event_type' => 'calendar_event_created',
             'channel' => 'google_calendar',
         ]);
+    }
+
+    public function test_evening_medication_calendar_event_uses_xigduo_title_and_description(): void
+    {
+        [$user, $workspace] = $this->context();
+        $connection = $this->connection($user, $workspace);
+        $connection->forceFill(['token_expires_at' => Carbon::parse('2026-06-24 00:00:00', 'Asia/Dubai')])->save();
+        $this->enableGoogleCalendar();
+        $this->schedule($user, [
+            'dose_key' => 'evening',
+            'label' => 'Evening medication',
+            'dosage_text' => 'Xigduo XR 5mg/1000mg',
+            'timing_note' => 'after dinner',
+            'schedule_time' => '21:30:00',
+            'hard_deadline_time' => null,
+            'metadata' => [
+                'frequency' => 'daily',
+                'medication_items' => [
+                    ['name' => 'Xigduo XR 5mg/1000mg', 'instruction' => 'Take twice daily', 'timing' => 'Night after dinner'],
+                ],
+            ],
+        ]);
+        Http::fake([
+            'https://www.googleapis.com/calendar/v3/calendars/primary/events' => Http::response([
+                'id' => 'google-evening-med-dose',
+                'summary' => "Sam's Medication - Evening",
+                'start' => ['dateTime' => '2026-06-23T21:30:00+04:00'],
+                'organizer' => ['email' => 'primary'],
+            ], 200),
+        ]);
+        $this->travelToDubai('2026-06-23 21:31:00');
+
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+
+            return $request->method() === 'POST'
+                && str_contains($request->url(), '/calendar/v3/calendars/primary/events')
+                && ($payload['summary'] ?? null) === "Sam's Medication - Evening"
+                && $payload['description'] === "Medication due:\n- Xigduo XR 5mg/1000mg\n\nConfirm Taken, Snooze, or Skip in Miriam/Slack."
+                && $payload['visibility'] === 'private';
+        });
+    }
+
+    public function test_ozempic_calendar_event_uses_weekly_title_and_description(): void
+    {
+        [$user, $workspace] = $this->context();
+        $connection = $this->connection($user, $workspace);
+        $connection->forceFill(['token_expires_at' => Carbon::parse('2026-06-25 00:00:00', 'Asia/Dubai')])->save();
+        $this->enableGoogleCalendar();
+        $this->schedule($user, [
+            'dose_key' => 'weekly_ozempic',
+            'label' => 'Weekly medication',
+            'dosage_text' => 'Ozempic',
+            'timing_note' => 'every Wednesday at 07:00',
+            'schedule_time' => '07:00:00',
+            'hard_deadline_time' => null,
+            'metadata' => [
+                'frequency' => 'weekly',
+                'weekday' => 3,
+                'weekday_name' => 'Wednesday',
+                'medication_items' => [
+                    ['name' => 'Ozempic', 'timing' => 'Every Wednesday at 07:00 Asia/Dubai'],
+                ],
+            ],
+        ]);
+        Http::fake([
+            'https://www.googleapis.com/calendar/v3/calendars/primary/events' => Http::response([
+                'id' => 'google-ozempic-med-dose',
+                'summary' => "Sam's Medication - Ozempic",
+                'start' => ['dateTime' => '2026-06-24T07:00:00+04:00'],
+                'organizer' => ['email' => 'primary'],
+            ], 200),
+        ]);
+        $this->travelToDubai('2026-06-24 07:01:00');
+
+        app(MedicationReminderService::class)->queueDueReminders(sync: true);
+
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+
+            return $request->method() === 'POST'
+                && str_contains($request->url(), '/calendar/v3/calendars/primary/events')
+                && ($payload['summary'] ?? null) === "Sam's Medication - Ozempic"
+                && $payload['description'] === "Medication due:\n- Ozempic\n\nConfirm Taken, Snooze, or Skip in Miriam/Slack."
+                && $payload['visibility'] === 'private';
+        });
     }
 
     public function test_medication_reminder_falls_back_when_google_calendar_not_connected(): void
@@ -700,13 +788,13 @@ class MedicationReminderTest extends TestCase
         Http::fake([
             'https://www.googleapis.com/calendar/v3/calendars/primary/events' => Http::response([
                 'id' => 'google-med-dose-1',
-                'summary' => 'Miriam medication reminder',
+                'summary' => "Sam's Medication - Morning",
                 'start' => ['dateTime' => '2026-06-23T08:30:00+04:00'],
                 'organizer' => ['email' => 'primary'],
             ], 200),
             'https://www.googleapis.com/calendar/v3/calendars/primary/events/google-med-dose-1' => Http::response([
                 'id' => 'google-med-dose-1',
-                'summary' => 'Miriam medication reminder',
+                'summary' => "Sam's Medication - Morning",
                 'start' => ['dateTime' => '2026-06-23T08:30:00+04:00'],
                 'organizer' => ['email' => 'primary'],
             ], 200),
@@ -721,6 +809,15 @@ class MedicationReminderTest extends TestCase
         $this->assertDatabaseHas('medication_reminder_events', ['event_type' => 'calendar_event_created']);
         $this->assertDatabaseHas('medication_reminder_events', ['event_type' => 'calendar_event_updated']);
         Http::assertSentCount(2);
+        Http::assertSent(function ($request) {
+            $payload = $request->data();
+
+            return $request->method() === 'PATCH'
+                && str_contains($request->url(), '/calendar/v3/calendars/primary/events/google-med-dose-1')
+                && ($payload['summary'] ?? null) === "Sam's Medication - Morning"
+                && ($payload['description'] ?? null) === "Medication due:\n- Xigduo XR 5mg/1000mg\n- Physiotens 0.2mg\n- Lodiva 10mg/160mg\n- Aterpen 10mg/20mg\n\nConfirm Taken, Snooze, or Skip in Miriam/Slack."
+                && ($payload['visibility'] ?? null) === 'private';
+        });
     }
 
     public function test_quiet_hours_suppress_delivery_but_flag_overdue(): void

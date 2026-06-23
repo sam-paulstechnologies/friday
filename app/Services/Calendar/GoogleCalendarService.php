@@ -169,8 +169,9 @@ class GoogleCalendarService
         $end = $start->copy()->addMinutes(10);
 
         return [
-            'summary' => 'Miriam medication reminder',
-            'description' => 'A scheduled medication is due. Open Miriam to confirm Taken, Snooze, or Skip.',
+            'summary' => $this->medicationReminderTitle($log),
+            'description' => $this->medicationReminderDescription($log),
+            'visibility' => 'private',
             'start' => [
                 'dateTime' => $start->toRfc3339String(),
                 'timeZone' => $timezone,
@@ -187,6 +188,45 @@ class GoogleCalendarService
                 ],
             ],
         ];
+    }
+
+    private function medicationReminderTitle(MedicationDoseLog $log): string
+    {
+        return match ($log->schedule?->dose_key) {
+            'morning' => "Sam's Medication - Morning",
+            'evening' => "Sam's Medication - Evening",
+            'weekly_ozempic' => "Sam's Medication - Ozempic",
+            default => "Sam's Medication",
+        };
+    }
+
+    private function medicationReminderDescription(MedicationDoseLog $log): string
+    {
+        $items = $this->medicationItems($log);
+
+        return "Medication due:\n"
+            .collect($items)->map(fn (string $item): string => "- {$item}")->implode("\n")
+            ."\n\nConfirm Taken, Snooze, or Skip in Miriam/Slack.";
+    }
+
+    private function medicationItems(MedicationDoseLog $log): array
+    {
+        $metadataItems = collect($log->schedule?->metadata['medication_items'] ?? [])
+            ->pluck('name')
+            ->filter()
+            ->map(fn (string $name): string => trim($name))
+            ->values()
+            ->all();
+
+        if ($metadataItems !== []) {
+            return $metadataItems;
+        }
+
+        return collect(explode(';', (string) $log->schedule?->dosage_text))
+            ->map(fn (string $item): string => trim($item))
+            ->filter()
+            ->values()
+            ->all() ?: ['Scheduled medication'];
     }
 
     private function throwCleanlyWhenFailed(Response $response, string $message): void
