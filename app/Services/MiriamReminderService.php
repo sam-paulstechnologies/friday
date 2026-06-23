@@ -221,6 +221,22 @@ class MiriamReminderService
         return $reminder;
     }
 
+    public function handleSlackAction(MiriamReminder $reminder, string $action, string $slackUserId, array $payload = []): string
+    {
+        $message = match ($action) {
+            'miriam_reminder_done' => $this->handleDoneAction($reminder, $slackUserId),
+            'miriam_reminder_snooze_15' => $this->handleSnoozeAction($reminder, $slackUserId),
+            'miriam_reminder_cancel' => $this->handleCancelAction($reminder, $slackUserId),
+            default => 'Unknown Miriam reminder action.',
+        };
+
+        if ($message !== 'Unknown Miriam reminder action.') {
+            $this->updateSlackActionMessage($payload, $message);
+        }
+
+        return $message;
+    }
+
     public function recordEvent(MiriamReminder $reminder, string $type, ?string $channel = null, array $metadata = []): void
     {
         $reminder->events()->create([
@@ -229,6 +245,105 @@ class MiriamReminderService
             'occurred_at' => CarbonImmutable::now('UTC'),
             'metadata' => array_filter($metadata, fn ($value) => $value !== null && $value !== ''),
         ]);
+    }
+
+    private function handleDoneAction(MiriamReminder $reminder, string $slackUserId): string
+    {
+        if ($reminder->status === 'cancelled') {
+            return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+        }
+
+        if ($reminder->status !== 'done') {
+            $this->markDone($reminder, $slackUserId);
+        }
+
+        return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+    }
+
+    private function handleSnoozeAction(MiriamReminder $reminder, string $slackUserId): string
+    {
+        if (in_array($reminder->status, ['done', 'cancelled'], true)) {
+            return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+        }
+
+        $this->snooze($reminder, $slackUserId, 15);
+
+        return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+    }
+
+    private function handleCancelAction(MiriamReminder $reminder, string $slackUserId): string
+    {
+        if ($reminder->status === 'done') {
+            return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+        }
+
+        if ($reminder->status !== 'cancelled') {
+            $this->cancel($reminder, $slackUserId);
+        }
+
+        return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+    }
+
+    private function actionStatusMessage(MiriamReminder $reminder): string
+    {
+        return match ($reminder->status) {
+            'done' => "✅ Done — {$reminder->title}",
+            'cancelled' => "🛑 Cancelled — {$reminder->title}",
+            'snoozed' => '⏰ Snoozed until '.$reminder->next_reminder_at?->setTimezone($reminder->timezone)->format('g:i A')." — {$reminder->title}",
+            default => "Miriam reminder: {$reminder->title}",
+        };
+    }
+
+    private function updateSlackActionMessage(array $payload, string $message): void
+    {
+        $blocks = [
+            [
+                'type' => 'section',
+                'text' => [
+                    'type' => 'mrkdwn',
+                    'text' => $message,
+                ],
+            ],
+        ];
+
+        $responseUrl = (string) ($payload['response_url'] ?? '');
+
+        if (filled($responseUrl)) {
+            try {
+                Http::asJson()->timeout(5)->post($responseUrl, [
+                    'replace_original' => true,
+                    'response_type' => 'in_channel',
+                    'text' => $message,
+                    'blocks' => $blocks,
+                ]);
+            } catch (\Throwable) {
+                //
+            }
+
+            return;
+        }
+
+        $token = config('services.slack.bot_token');
+        $channel = (string) data_get($payload, 'channel.id', '');
+        $ts = (string) data_get($payload, 'message.ts', '');
+
+        if (! filled($token) || ! filled($channel) || ! filled($ts)) {
+            return;
+        }
+
+        try {
+            Http::withToken($token)
+                ->acceptJson()
+                ->timeout(5)
+                ->post('https://slack.com/api/chat.update', [
+                    'channel' => $channel,
+                    'ts' => $ts,
+                    'text' => $message,
+                    'blocks' => $blocks,
+                ]);
+        } catch (\Throwable) {
+            //
+        }
     }
 
     private function parseTimeOnDate(string $time, CarbonImmutable $date): CarbonImmutable

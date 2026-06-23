@@ -201,6 +201,8 @@ class MiriamReminderTest extends TestCase
 
     public function test_general_reminder_buttons_update_status(): void
     {
+        Http::fake(['https://hooks.slack.com/*' => Http::response(['ok' => true])]);
+
         $reminder = MiriamReminder::create([
             'category' => 'personal',
             'title' => 'call sunny',
@@ -212,21 +214,89 @@ class MiriamReminderTest extends TestCase
 
         $this->postSignedReminderAction('miriam_reminder_snooze_15', $reminder->id)
             ->assertOk()
-            ->assertJson(['text' => 'Snoozed for 15 minutes.']);
+            ->assertJson(['text' => '⏰ Snoozed until 12:15 PM — call sunny']);
 
         $this->assertSame('snoozed', $reminder->fresh()->status);
         $this->assertNotNull($reminder->fresh()->next_reminder_at);
 
         $this->postSignedReminderAction('miriam_reminder_done', $reminder->id)
             ->assertOk()
-            ->assertJson(['text' => 'Done. I marked that reminder complete.']);
+            ->assertJson(['text' => '✅ Done — call sunny']);
 
         $this->assertSame('done', $reminder->fresh()->status);
         $this->assertNull($reminder->fresh()->next_reminder_at);
     }
 
+    public function test_done_updates_slack_message_and_removes_buttons(): void
+    {
+        Http::fake(['https://hooks.slack.com/*' => Http::response(['ok' => true])]);
+
+        $reminder = $this->pendingReminder('call jasion');
+
+        $this->postSignedReminderAction('miriam_reminder_done', $reminder->id)
+            ->assertOk()
+            ->assertJson(['text' => '✅ Done — call jasion']);
+
+        $this->assertSame('done', $reminder->fresh()->status);
+        $this->assertNull($reminder->fresh()->next_reminder_at);
+        $this->assertSlackMessageUpdated('✅ Done — call jasion');
+    }
+
+    public function test_snooze_updates_slack_message_and_next_time(): void
+    {
+        Http::fake(['https://hooks.slack.com/*' => Http::response(['ok' => true])]);
+
+        $reminder = $this->pendingReminder('check the oven');
+
+        $this->postSignedReminderAction('miriam_reminder_snooze_15', $reminder->id)
+            ->assertOk()
+            ->assertJson(['text' => '⏰ Snoozed until 12:15 PM — check the oven']);
+
+        $this->assertSame('snoozed', $reminder->fresh()->status);
+        $this->assertSame('2026-06-23 08:15:00', $reminder->fresh()->next_reminder_at->format('Y-m-d H:i:s'));
+        $this->assertSlackMessageUpdated('⏰ Snoozed until 12:15 PM — check the oven');
+    }
+
+    public function test_cancel_updates_slack_message_and_status(): void
+    {
+        Http::fake(['https://hooks.slack.com/*' => Http::response(['ok' => true])]);
+
+        $reminder = $this->pendingReminder('pay dewa');
+
+        $this->postSignedReminderAction('miriam_reminder_cancel', $reminder->id)
+            ->assertOk()
+            ->assertJson(['text' => '🛑 Cancelled — pay dewa']);
+
+        $this->assertSame('cancelled', $reminder->fresh()->status);
+        $this->assertNull($reminder->fresh()->next_reminder_at);
+        $this->assertSlackMessageUpdated('🛑 Cancelled — pay dewa');
+    }
+
+    public function test_duplicate_clicks_keep_current_terminal_status(): void
+    {
+        Http::fake(['https://hooks.slack.com/*' => Http::response(['ok' => true])]);
+
+        $reminder = $this->pendingReminder('send invoice');
+
+        $this->postSignedReminderAction('miriam_reminder_done', $reminder->id)
+            ->assertOk()
+            ->assertJson(['text' => '✅ Done — send invoice']);
+
+        CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-06-23 12:10:00', 'Asia/Dubai'));
+
+        $this->postSignedReminderAction('miriam_reminder_cancel', $reminder->id)
+            ->assertOk()
+            ->assertJson(['text' => '✅ Done — send invoice']);
+
+        $this->assertSame('done', $reminder->fresh()->status);
+        $this->assertNull($reminder->fresh()->cancelled_at);
+        $this->assertNull($reminder->fresh()->next_reminder_at);
+    }
+
     public function test_existing_medication_action_endpoint_handles_general_reminder_buttons(): void
     {
+        Http::fake(['https://hooks.slack.com/*' => Http::response(['ok' => true])]);
+
         $reminder = MiriamReminder::create([
             'category' => 'work',
             'title' => 'send invoice',
@@ -238,7 +308,7 @@ class MiriamReminderTest extends TestCase
 
         $this->postSignedReminderAction('miriam_reminder_cancel', $reminder->id, 'slack.medication.actions')
             ->assertOk()
-            ->assertJson(['text' => 'Cancelled.']);
+            ->assertJson(['text' => '🛑 Cancelled — send invoice']);
 
         $this->assertSame('cancelled', $reminder->fresh()->status);
         $this->assertNull($reminder->fresh()->next_reminder_at);
@@ -336,6 +406,9 @@ class MiriamReminderTest extends TestCase
         $body = http_build_query([
             'payload' => json_encode([
                 'type' => 'block_actions',
+                'response_url' => 'https://hooks.slack.com/actions/T123/ABC',
+                'channel' => ['id' => 'CMIRIAM'],
+                'message' => ['ts' => '1710000000.000200'],
                 'user' => ['id' => 'U123'],
                 'actions' => [
                     [
@@ -361,5 +434,31 @@ class MiriamReminderTest extends TestCase
             ],
             $body
         );
+    }
+
+    private function pendingReminder(string $title): MiriamReminder
+    {
+        return MiriamReminder::create([
+            'category' => 'personal',
+            'title' => $title,
+            'timezone' => 'Asia/Dubai',
+            'due_at' => CarbonImmutable::now('UTC'),
+            'status' => 'pending',
+            'next_reminder_at' => CarbonImmutable::now('UTC'),
+        ]);
+    }
+
+    private function assertSlackMessageUpdated(string $text): void
+    {
+        Http::assertSent(function ($request) use ($text) {
+            $payload = $request->data();
+
+            return $request->url() === 'https://hooks.slack.com/actions/T123/ABC'
+                && ($payload['replace_original'] ?? null) === true
+                && ($payload['text'] ?? null) === $text
+                && count($payload['blocks'] ?? []) === 1
+                && ($payload['blocks'][0]['type'] ?? null) === 'section'
+                && ! collect($payload['blocks'])->contains(fn ($block) => ($block['type'] ?? null) === 'actions');
+        });
     }
 }

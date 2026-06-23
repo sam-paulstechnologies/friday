@@ -24,7 +24,7 @@ class SlackMedicationActionController extends Controller
         $slackUser = data_get($payload, 'user.id');
 
         if (is_string($action) && str_starts_with($action, 'miriam_reminder_')) {
-            return $this->handleMiriamReminderAction($action, (int) $doseLogId, $miriamReminders, (string) $slackUser);
+            return $this->handleMiriamReminderAction($action, (int) $doseLogId, $miriamReminders, (string) $slackUser, $payload);
         }
 
         /** @var MedicationDoseLog|null $log */
@@ -101,7 +101,7 @@ class SlackMedicationActionController extends Controller
         return $this->slackResponse($message);
     }
 
-    private function handleMiriamReminderAction(string $action, int $reminderId, MiriamReminderService $reminders, string $slackUser): JsonResponse
+    private function handleMiriamReminderAction(string $action, int $reminderId, MiriamReminderService $reminders, string $slackUser, array $payload): JsonResponse
     {
         /** @var MiriamReminder|null $reminder */
         $reminder = MiriamReminder::query()->find($reminderId);
@@ -111,21 +111,15 @@ class SlackMedicationActionController extends Controller
         }
 
         if ($action === 'miriam_reminder_done') {
-            $reminders->markDone($reminder, $slackUser);
-
-            return $this->slackResponse('Done. I marked that reminder complete.');
+            return $this->slackResponse($reminders->handleSlackAction($reminder, $action, $slackUser, $payload));
         }
 
         if ($action === 'miriam_reminder_snooze_15') {
-            $reminders->snooze($reminder, $slackUser, 15);
-
-            return $this->slackResponse('Snoozed for 15 minutes.');
+            return $this->slackResponse($reminders->handleSlackAction($reminder, $action, $slackUser, $payload));
         }
 
         if ($action === 'miriam_reminder_cancel') {
-            $reminders->cancel($reminder, $slackUser);
-
-            return $this->slackResponse('Cancelled.');
+            return $this->slackResponse($reminders->handleSlackAction($reminder, $action, $slackUser, $payload));
         }
 
         return $this->slackResponse('Unknown Miriam reminder action.');

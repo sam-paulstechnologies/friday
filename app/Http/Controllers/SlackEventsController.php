@@ -103,21 +103,15 @@ class SlackEventsController extends Controller
         }
 
         if ($action === 'miriam_reminder_done') {
-            $reminders->markDone($reminder, $slackUser);
-
-            return $this->slackResponse('Done. I marked that reminder complete.');
+            return $this->slackResponse($reminders->handleSlackAction($reminder, $action, $slackUser, $payload));
         }
 
         if ($action === 'miriam_reminder_snooze_15') {
-            $reminders->snooze($reminder, $slackUser, 15);
-
-            return $this->slackResponse('Snoozed for 15 minutes.');
+            return $this->slackResponse($reminders->handleSlackAction($reminder, $action, $slackUser, $payload));
         }
 
         if ($action === 'miriam_reminder_cancel') {
-            $reminders->cancel($reminder, $slackUser);
-
-            return $this->slackResponse('Cancelled.');
+            return $this->slackResponse($reminders->handleSlackAction($reminder, $action, $slackUser, $payload));
         }
 
         return $this->slackResponse('Unknown Miriam reminder action.');
