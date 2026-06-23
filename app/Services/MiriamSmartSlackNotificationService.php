@@ -10,17 +10,10 @@ class MiriamSmartSlackNotificationService
     private const DEDUPE_MINUTES = 30;
 
     private const ALLOWED_TYPES = [
-        'queue_started',
-        'phase_started',
-        'phase_passed',
-        'phase_blocked',
-        'hard_safety_blocker',
-        'runner_offline_active_work',
-        'manual_business_decision_needed',
-        'release_package_ready',
-        'development_summary',
-        'development_blocked',
-        'queue_completed',
+        'development_started',
+        'development_completed',
+        'safety_gate',
+        'blocker',
     ];
 
     public function notify(string $type, string $text, array $context = [], array $blocks = []): array
@@ -65,19 +58,34 @@ class MiriamSmartSlackNotificationService
         ]);
     }
 
-    public function notifyDevelopmentSummary(string $app, string $summary, ?int $jobId = null, ?string $status = null, array $context = []): array
+    public function notifyDevelopmentStarted(string $app, string $work, string $goal, ?int $jobId = null, ?int $phaseId = null): array
     {
-        return $this->notify('development_summary', $summary, array_merge([
+        return $this->notify('development_started', "Development started: {$app} - {$work}. Goal: {$goal}. Details will be stored in Miriam.", [
             'app' => $app,
             'job_id' => $jobId,
-            'status' => $status ?: 'summary',
-            'summary_hash' => sha1($summary),
+            'phase' => $phaseId ?: 'none',
+            'status' => 'started',
+        ]);
+    }
+
+    public function notifyDevelopmentCompleted(string $app, string $table, ?int $jobId = null, ?string $status = null, array $context = []): array
+    {
+        return $this->notify('development_completed', $table, array_merge([
+            'app' => $app,
+            'job_id' => $jobId,
+            'status' => $status ?: 'completed',
+            'summary_hash' => sha1($table),
         ], $context));
+    }
+
+    public function notifyDevelopmentSummary(string $app, string $summary, ?int $jobId = null, ?string $status = null, array $context = []): array
+    {
+        return ['sent' => false, 'reason' => 'signal_only_development_summary_suppressed'];
     }
 
     public function notifyDevelopmentBlocked(string $app, string $phase, string $rootCause, ?int $jobId = null): array
     {
-        return $this->notify('development_blocked', implode("\n", [
+        return $this->notify('blocker', implode("\n", [
             '*Miriam development blocker*',
             "App: {$app}",
             "Phase: {$phase}",
@@ -93,7 +101,7 @@ class MiriamSmartSlackNotificationService
 
     public function notifyHardSafetyBlocker(string $app, string $phase, string $rootCause, ?int $jobId = null): array
     {
-        return $this->notify('hard_safety_blocker', implode("\n", [
+        return $this->notify('safety_gate', implode("\n", [
             '*Miriam hard safety blocker*',
             "App: {$app}",
             "Phase: {$phase}",

@@ -954,7 +954,7 @@ class MiriamDevelopmentManagerTest extends TestCase
             'status' => 'completed',
             'test_result' => 'passed',
         ]);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Miriam development update')
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), '| App | Work Done | Status | Commit | Tests | Deployment | Next |')
             && ! str_contains((string) $request->body(), 'mra_approval_notice')
             && ! str_contains((string) $request->body(), 'xoxb-test'));
         Http::assertNotSent(fn ($request) => str_contains((string) $request->body(), 'Miriam Development Manager needs approval'));
@@ -1016,7 +1016,7 @@ class MiriamDevelopmentManagerTest extends TestCase
             $this->onePhasePayload()
         );
 
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Miriam development update')
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), '| App | Work Done | Status | Commit | Tests | Deployment | Next |')
             && ! str_contains((string) $request->body(), 'mra_do_not_leak_this_token')
             && ! str_contains((string) $request->body(), 'token_hash')
             && ! str_contains((string) $request->body(), 'xoxb-test'));
@@ -1610,20 +1610,22 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->assertStringContainsString('Warning: 2 active/online runners appear to be on MAIN-PC', $text);
     }
 
-    public function test_smart_notification_policy_deduplicates_and_sends_allowed_lifecycle_events(): void
+    public function test_smart_notification_policy_sends_only_started_completed_safety_and_blocker_signals(): void
     {
         $this->seedSlackContext();
         Cache::flush();
 
         $service = app(MiriamSmartSlackNotificationService::class);
-        $service->notifyPhasePassed('ChurchForce', 'QA', 10);
+        $service->notifyDevelopmentStarted('ChurchForce', 'QA', 'Run validation.', 10, 20);
+        $service->notifyDevelopmentStarted('ChurchForce', 'QA', 'Run validation.', 10, 20);
+        $service->notifyDevelopmentCompleted('ChurchForce', "| App | Work Done | Status | Commit | Tests | Deployment | Next |\n| --- | --------- | ------ | ------ | ----- | ---------- | ---- |\n| ChurchForce | QA complete | completed | abc123 | php artisan test | not_deployed | Review |", 10, 'completed');
         $service->notifyPhasePassed('ChurchForce', 'QA', 10);
         $service->notifyQueueCompleted('ChurchForce and CatererHQ queues finished.', 'churchforce', 10);
         $service->notify('validation_command', 'php artisan test line output', ['app' => 'churchforce']);
 
         Http::assertSentCount(2);
-        Http::assertSent(fn ($request) => str_contains((string) (json_decode((string) $request->body(), true)['text'] ?? ''), 'Miriam phase passed: ChurchForce / QA'));
-        Http::assertSent(fn ($request) => str_contains((string) (json_decode((string) $request->body(), true)['text'] ?? ''), 'Miriam queue completed.'));
+        Http::assertSent(fn ($request) => str_contains((string) (json_decode((string) $request->body(), true)['text'] ?? ''), 'Development started: ChurchForce'));
+        Http::assertSent(fn ($request) => str_contains((string) (json_decode((string) $request->body(), true)['text'] ?? ''), '| App | Work Done | Status | Commit | Tests | Deployment | Next |'));
     }
 
     public function test_blocked_development_notifications_are_sent_once(): void
@@ -1702,6 +1704,29 @@ class MiriamDevelopmentManagerTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_development_started_message_is_sent_once_per_app_job_phase(): void
+    {
+        $this->seedSlackContext();
+        Cache::flush();
+        $runner = $this->runner('mra_started_signal', ['status' => 'active', 'last_seen_at' => now()]);
+        $job = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram(options: ['runner_agent_id' => $runner->id]);
+        $phaseRun = $job->phaseRuns()->firstOrFail();
+        $ledgerService = app(\App\Services\MiriamDevelopmentLedgerService::class);
+        $ledger = $ledgerService->recordJob($job->fresh(), 'running', 'Runner started phase QA.', $phaseRun);
+        $duplicate = $ledgerService->recordJob($job->fresh(), 'running', 'Runner started phase QA again.', $phaseRun);
+
+        $first = $ledgerService->notifyStartedIfNeeded($ledger);
+        Cache::flush();
+        $second = $ledgerService->notifyStartedIfNeeded($duplicate);
+
+        $this->assertTrue($first['sent']);
+        $this->assertFalse($second['sent']);
+        $this->assertSame('durable_started_duplicate_suppressed', $second['reason']);
+        $this->assertNotNull($ledger->fresh()->started_notified_at);
+        Http::assertSentCount(1);
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development started: Miriam Product Build'));
+    }
+
     public function test_completed_ledger_summary_notifies_once_with_durable_dedupe_key(): void
     {
         $this->seedSlackContext();
@@ -1711,8 +1736,14 @@ class MiriamDevelopmentManagerTest extends TestCase
         $phaseRun = $job->phaseRuns()->firstOrFail();
         $ledgerService = app(\App\Services\MiriamDevelopmentLedgerService::class);
 
-        $first = $ledgerService->recordJob($job->fresh(), 'completed', 'Completed the same phase summary.', $phaseRun);
-        $second = $ledgerService->recordJob($job->fresh(), 'completed', 'Completed the same phase summary.', $phaseRun);
+        $meta = [
+            'files_changed' => ['app/Example.php'],
+            'tests_run' => ['php artisan test'],
+            'test_result' => 'passed',
+            'commit_hash' => 'abc123456789',
+        ];
+        $first = $ledgerService->recordJob($job->fresh(), 'completed', 'Completed the same phase summary.', $phaseRun, $meta);
+        $second = $ledgerService->recordJob($job->fresh(), 'completed', 'Completed the same phase summary.', $phaseRun, $meta);
 
         $firstResult = $ledgerService->notifySummaryIfNeeded($first);
         Cache::flush();
@@ -1725,6 +1756,27 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->assertNotNull($first->fresh()->summary_notified_at);
         $this->assertNull($second->fresh()->summary_notified_at);
         Http::assertSentCount(1);
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), '| App | Work Done | Status | Commit | Tests | Deployment | Next |')
+            && ! str_contains((string) $request->body(), 'Changed: none recorded')
+            && ! str_contains((string) $request->body(), 'Commit: none recorded')
+            && ! str_contains((string) $request->body(), 'app/Example.php'));
+    }
+
+    public function test_empty_normal_completed_ledger_does_not_post_to_slack(): void
+    {
+        $this->seedSlackContext();
+        Cache::flush();
+        $runner = $this->runner('mra_empty_summary', ['status' => 'active', 'last_seen_at' => now()]);
+        $job = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram(options: ['runner_agent_id' => $runner->id]);
+        $phaseRun = $job->phaseRuns()->firstOrFail();
+        $ledger = app(\App\Services\MiriamDevelopmentLedgerService::class)
+            ->recordJob($job->fresh(), 'completed', 'Completed with no recorded implementation details.', $phaseRun);
+
+        $result = app(\App\Services\MiriamDevelopmentLedgerService::class)->notifySummaryIfNeeded($ledger);
+
+        $this->assertFalse($result['sent']);
+        $this->assertSame('empty_completion_signal_suppressed', $result['reason']);
+        Http::assertNothingSent();
     }
 
     public function test_old_waiting_approval_cards_are_suppressed_after_quiet_mode(): void
@@ -1813,6 +1865,7 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->artisan('miriam:dev:summary', ['--app' => 'churchforce'])
             ->expectsOutputToContain('Miriam Development Manager summary')
             ->expectsOutputToContain('Ledger records: 1')
+            ->expectsOutputToContain('| App | Work Done | Status | Commit | Tests | Deployment | Next |')
             ->expectsOutputToContain('ChurchForce demo polish completed.')
             ->expectsOutputToContain('Create manual release package.')
             ->assertExitCode(0);
@@ -1880,6 +1933,40 @@ class MiriamDevelopmentManagerTest extends TestCase
             ->where('summary', 'Ingested command center summary.')
             ->count());
         Http::assertNothingSent();
+    }
+
+    public function test_mute_noise_command_is_idempotent_and_keeps_safety_gates_active(): void
+    {
+        $this->runner('mra_mute_noise', ['status' => 'active', 'last_seen_at' => now()]);
+        $this->promptProgram();
+        $job = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram();
+        $job->update([
+            'status' => 'waiting_for_approval',
+            'error_message' => 'Normal completed phase is waiting for review.',
+        ]);
+
+        $this->artisan('miriam:dev:mute-noise')
+            ->expectsOutputToContain('Muted 1 normal Miriam development notification gate')
+            ->expectsOutputToContain('Safety gates remain active')
+            ->assertExitCode(0);
+        $this->artisan('miriam:dev:mute-noise')
+            ->expectsOutputToContain('Muted 0 normal Miriam development notification gate')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('miriam_development_job_events', [
+            'development_job_id' => $job->id,
+            'event_type' => 'development_noise_muted',
+        ]);
+    }
+
+    public function test_mute_noise_command_is_safe_when_optional_tables_are_missing(): void
+    {
+        Schema::shouldReceive('hasTable')
+            ->andReturnUsing(fn (string $table): bool => $table !== 'miriam_development_jobs');
+
+        $this->artisan('miriam:dev:mute-noise')
+            ->expectsOutputToContain('miriam_development_jobs table is missing')
+            ->assertExitCode(0);
     }
 
     public function test_quiet_development_mode_suppresses_normal_approval_cards(): void

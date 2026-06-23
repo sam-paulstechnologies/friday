@@ -53,6 +53,7 @@ class MiriamDevelopmentLedgerService
             'blocker_reason' => $blocker,
             'next_action' => $meta['next_action'] ?? $this->nextAction($job, $blocker),
             'notification_dedupe_key' => $this->notificationDedupeKey($app?->id, $job->id, $phaseId, $status, $summary),
+            'started_notification_dedupe_key' => $this->startedNotificationDedupeKey($app?->id, $job->id, $phaseId),
             'completed_at' => $completedAt,
         ]);
     }
@@ -152,13 +153,59 @@ class MiriamDevelopmentLedgerService
 
         return implode("\n", [
             "*{$title}*",
-            'Completed: '.$this->compactLedgerList($ledgers->where('status', 'completed')->take(3)),
-            'Changed: '.$this->compactFiles($latest),
-            'Tests: '.($latest->test_result ?: 'not recorded'),
-            'Commit: '.($latest->commit_hash ?: 'none recorded'),
-            'Blockers: '.$this->compactLedgerList($ledgers->whereIn('status', ['blocked', 'failed', 'needs_human'])->take(3), 'blocker_reason'),
-            'Next: '.($latest->next_action ?: 'No next action recorded.'),
+            $this->compactLedgerTable($ledgers->take(8)),
         ]);
+    }
+
+    public function notifyStartedIfNeeded(MiriamDevelopmentLedger $ledger, ?string $goal = null): array
+    {
+        $ledger->refresh();
+
+        if ($ledger->status !== 'running') {
+            return ['sent' => false, 'reason' => 'ledger_status_not_startable'];
+        }
+
+        if ($ledger->started_notified_at) {
+            return ['sent' => false, 'reason' => 'started_already_notified'];
+        }
+
+        if ($this->isHistoricalLedger($ledger)) {
+            return ['sent' => false, 'reason' => 'historical_ledger_suppressed'];
+        }
+
+        $key = $ledger->started_notification_dedupe_key ?: $this->startedNotificationDedupeKey(
+            $ledger->app_id,
+            $ledger->job_id,
+            $ledger->phase_id,
+        );
+
+        if (! $ledger->started_notification_dedupe_key) {
+            $ledger->forceFill(['started_notification_dedupe_key' => $key])->save();
+        }
+
+        $alreadySent = MiriamDevelopmentLedger::query()
+            ->where('started_notification_dedupe_key', $key)
+            ->whereNotNull('started_notified_at')
+            ->where('id', '!=', $ledger->id)
+            ->exists();
+
+        if ($alreadySent) {
+            return ['sent' => false, 'reason' => 'durable_started_duplicate_suppressed'];
+        }
+
+        $response = app(MiriamSmartSlackNotificationService::class)->notifyDevelopmentStarted(
+            $ledger->app_name ?: 'Miriam',
+            $ledger->phase_name ?: ($ledger->summary ?: 'development work'),
+            $this->shortSlackCell($goal ?: $ledger->summary ?: $ledger->next_action ?: 'Run the assigned development phase.'),
+            $ledger->job_id,
+            $ledger->phase_id,
+        );
+
+        if ($response['sent'] ?? false) {
+            $ledger->forceFill(['started_notified_at' => now()])->save();
+        }
+
+        return $response + ['started_notification_dedupe_key' => $key];
     }
 
     public function notifySummaryIfNeeded(MiriamDevelopmentLedger $ledger): array
@@ -175,6 +222,10 @@ class MiriamDevelopmentLedgerService
 
         if ($this->isHistoricalLedger($ledger)) {
             return ['sent' => false, 'reason' => 'historical_ledger_suppressed'];
+        }
+
+        if (! $this->hasCompletionSignal($ledger)) {
+            return ['sent' => false, 'reason' => 'empty_completion_signal_suppressed'];
         }
 
         $key = $ledger->notification_dedupe_key ?: $this->notificationDedupeKey(
@@ -199,8 +250,8 @@ class MiriamDevelopmentLedgerService
             return ['sent' => false, 'reason' => 'durable_duplicate_suppressed'];
         }
 
-        $summary = $this->developmentSummaryText($ledger->app?->slug);
-        $response = app(MiriamSmartSlackNotificationService::class)->notifyDevelopmentSummary(
+        $summary = $this->completedTableText($ledger);
+        $response = app(MiriamSmartSlackNotificationService::class)->notifyDevelopmentCompleted(
             $ledger->app_name ?: 'Miriam',
             $summary,
             $ledger->job_id,
@@ -500,6 +551,90 @@ class MiriamDevelopmentLedgerService
             $status,
             sha1($summary),
         ]));
+    }
+
+    public function startedNotificationDedupeKey(?int $appId, ?int $jobId, ?int $phaseId): string
+    {
+        return sha1(implode(':', [
+            'started',
+            $appId ?: 'none',
+            $jobId ?: 'none',
+            $phaseId ?: 'none',
+        ]));
+    }
+
+    public function compactLedgerTableText(?string $slug = null, int $limit = 10): string
+    {
+        if (! Schema::hasTable('miriam_development_ledgers')) {
+            return 'Development ledger table is not installed yet. Run migrations.';
+        }
+
+        $app = null;
+        if ($slug && Schema::hasTable('miriam_managed_apps')) {
+            $app = MiriamManagedApp::where('slug', $slug)->first();
+        }
+
+        $ledgers = MiriamDevelopmentLedger::query()
+            ->when($app, fn ($query) => $query->where('app_id', $app->id))
+            ->latest()
+            ->limit($limit)
+            ->get();
+
+        if ($ledgers->isEmpty()) {
+            return "| App | Work Done | Status | Commit | Tests | Deployment | Next |\n| --- | --------- | ------ | ------ | ----- | ---------- | ---- |\n| Miriam | No ledger activity recorded | planned | - | - | - | - |";
+        }
+
+        return $this->compactLedgerTable($ledgers);
+    }
+
+    private function completedTableText(MiriamDevelopmentLedger $ledger): string
+    {
+        return $this->compactLedgerTable(collect([$ledger]));
+    }
+
+    private function compactLedgerTable(Collection $ledgers): string
+    {
+        $rows = $ledgers->map(fn (MiriamDevelopmentLedger $ledger) => implode(' | ', [
+            '| '.$this->shortSlackCell($ledger->app_name ?: 'Miriam'),
+            $this->shortSlackCell($ledger->summary ?: $ledger->phase_name ?: 'Completed work'),
+            $this->shortSlackCell($ledger->status ?: 'completed'),
+            $this->shortSlackCell($ledger->commit_hash ? substr($ledger->commit_hash, 0, 12) : '-'),
+            $this->shortSlackCell($this->testsCell($ledger)),
+            $this->shortSlackCell($ledger->deployment_status ?: '-'),
+            $this->shortSlackCell($ledger->next_action ?: '-').' |',
+        ]))->implode("\n");
+
+        return "| App | Work Done | Status | Commit | Tests | Deployment | Next |\n| --- | --------- | ------ | ------ | ----- | ---------- | ---- |\n{$rows}";
+    }
+
+    private function hasCompletionSignal(MiriamDevelopmentLedger $ledger): bool
+    {
+        if (in_array($ledger->status, ['blocked', 'failed', 'needs_human'], true) || filled($ledger->blocker_reason)) {
+            return true;
+        }
+
+        return $ledger->filesChanged() !== []
+            || $ledger->testsRun() !== []
+            || filled($ledger->test_result)
+            || filled($ledger->commit_hash);
+    }
+
+    private function testsCell(MiriamDevelopmentLedger $ledger): string
+    {
+        $tests = $ledger->testsRun();
+
+        if ($tests !== []) {
+            return implode(', ', array_slice($tests, 0, 2)).(count($tests) > 2 ? ' +' . (count($tests) - 2) : '');
+        }
+
+        return $ledger->test_result ?: '-';
+    }
+
+    private function shortSlackCell(string $value): string
+    {
+        $value = trim(str_replace(["\r", "\n", '|'], [' ', ' ', '/'], $value));
+
+        return (string) str($value === '' ? '-' : $value)->limit(80);
     }
 
     private function isHistoricalLedger(MiriamDevelopmentLedger $ledger): bool

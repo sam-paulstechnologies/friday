@@ -80,7 +80,7 @@ class MiriamDevelopmentSummary extends Command
         }
 
         $this->line('');
-        $this->line($ledger->developmentSummaryText(is_string($appSlug) && $appSlug !== '' ? $appSlug : null));
+        $this->line($ledger->compactLedgerTableText(is_string($appSlug) && $appSlug !== '' ? $appSlug : null));
 
         return self::SUCCESS;
     }

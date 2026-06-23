@@ -253,7 +253,8 @@ class MiriamDevelopmentManagerService
         ]);
 
         $this->recordEvent($job, 'phase_started', 'Runner started phase', $phaseRun->phase?->title, $runner, ['phase_run_id' => $phaseRun->id], $phaseRun);
-        $this->ledger->recordJob($job->fresh(['managedApp', 'program', 'currentPhase', 'releasePackages']), 'running', 'Runner started phase '.($phaseRun->phase?->title ?: 'untitled').'.', $phaseRun);
+        $ledger = $this->ledger->recordJob($job->fresh(['managedApp', 'program', 'currentPhase', 'releasePackages']), 'running', 'Runner started phase '.($phaseRun->phase?->title ?: 'untitled').'.', $phaseRun);
+        $this->ledger->notifyStartedIfNeeded($ledger, $phaseRun->phase?->description ?: $phaseRun->phase?->title);
 
         return $phaseRun->fresh(['phase', 'savedPrompt']);
     }

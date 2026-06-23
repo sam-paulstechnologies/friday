@@ -26,6 +26,8 @@ class MiriamDevelopmentLedger extends Model
         'next_action',
         'notification_dedupe_key',
         'summary_notified_at',
+        'started_notification_dedupe_key',
+        'started_notified_at',
         'completed_at',
     ];
 
@@ -34,6 +36,7 @@ class MiriamDevelopmentLedger extends Model
         return [
             'completed_at' => 'datetime',
             'summary_notified_at' => 'datetime',
+            'started_notified_at' => 'datetime',
         ];
     }
 

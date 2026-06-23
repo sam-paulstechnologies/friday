@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\MiriamDevelopmentFailure;
 use App\Models\MiriamDevelopmentJob;
-use App\Services\Slack\SlackService;
 use Illuminate\Support\Facades\Cache;
 
 class MiriamDevelopmentApprovalNotifier
@@ -86,7 +85,15 @@ class MiriamDevelopmentApprovalNotifier
         }
 
         $message = $this->message($job, $failure, $reason);
-        $response = app(SlackService::class)->sendMessage($channel, $message['text'], $message['blocks']);
+        $result = app(MiriamSmartSlackNotificationService::class)->notify('safety_gate', $message['text'], [
+            'app' => $job->managedApp?->name ?: 'Miriam',
+            'job_id' => $job->id,
+            'phase' => $failure?->phase_run_id ?: $job->current_phase_id ?: 'none',
+            'failure_id' => $failure?->id ?: 'none',
+            'status' => $job->status,
+            'summary_hash' => sha1($reason),
+        ], $message['blocks']);
+        $response = $result['response'] ?? [];
 
         Cache::put($dedupeKey, true, now()->addMinutes(self::DEDUPE_MINUTES));
 
@@ -97,7 +104,7 @@ class MiriamDevelopmentApprovalNotifier
             ]);
         }
 
-        return ['sent' => (bool) ($response['ok'] ?? false), 'response' => $response];
+        return $result;
     }
 
     private function message(MiriamDevelopmentJob $job, ?MiriamDevelopmentFailure $failure, string $reason): array
