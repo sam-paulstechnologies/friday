@@ -11,6 +11,7 @@ use App\Models\MiriamPromptPhase;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class MiriamDevelopmentLedgerService
 {
@@ -43,6 +44,8 @@ class MiriamDevelopmentLedgerService
             'phase_run_id' => $phaseRun?->id,
             'phase_id' => $phaseId,
             'phase_name' => $phase?->title ?: $phase?->phase_key,
+            'development_name' => $meta['development_name'] ?? $this->developmentName($job, $phaseRun, $summary),
+            'short_description' => $meta['short_description'] ?? $this->shortDescription($job, $phaseRun, $summary),
             'status' => $status,
             'summary' => $summary,
             'files_changed_json' => json_encode(array_values($filesChanged), JSON_PRETTY_PRINT),
@@ -194,9 +197,8 @@ class MiriamDevelopmentLedgerService
         }
 
         $response = app(MiriamSmartSlackNotificationService::class)->notifyDevelopmentStarted(
-            $ledger->app_name ?: 'Miriam',
-            $ledger->phase_name ?: ($ledger->summary ?: 'development work'),
-            $this->shortSlackCell($goal ?: $ledger->summary ?: $ledger->next_action ?: 'Run the assigned development phase.'),
+            $this->shortSlackCell($ledger->development_name ?: $this->developmentNameFromLedger($ledger)),
+            $this->shortSlackCell($goal ?: $ledger->short_description ?: $ledger->summary ?: $ledger->next_action ?: 'Run the assigned development phase.'),
             $ledger->job_id,
             $ledger->phase_id,
         );
@@ -250,7 +252,7 @@ class MiriamDevelopmentLedgerService
 
         $summary = $this->completionCardSummary($ledger);
         $response = app(MiriamSmartSlackNotificationService::class)->notifyDevelopmentCompleted(
-            $ledger->app_name ?: 'Miriam',
+            $this->shortSlackCell($ledger->development_name ?: $this->developmentNameFromLedger($ledger)),
             $summary,
             $ledger->job_id,
             $ledger->phase_id,
@@ -642,8 +644,8 @@ class MiriamDevelopmentLedgerService
     private function completionCardSummary(MiriamDevelopmentLedger $ledger): array
     {
         return [
-            'app' => $ledger->app_name ?: 'Miriam',
-            'work_done' => $this->shortSlackCell($ledger->summary ?: $ledger->phase_name ?: 'Completed work'),
+            'development_name' => $this->shortSlackCell($ledger->development_name ?: $this->developmentNameFromLedger($ledger)),
+            'short_summary' => $this->shortSlackCell($ledger->summary ?: $ledger->phase_name ?: 'Completed work'),
             'status' => $this->shortSlackCell($ledger->status ?: 'completed'),
             'commit' => $this->shortSlackCell($ledger->commit_hash ? substr($ledger->commit_hash, 0, 12) : '-'),
             'tests' => $this->shortSlackCell($this->testsCell($ledger)),
@@ -708,6 +710,43 @@ class MiriamDevelopmentLedgerService
         $value = trim(str_replace(["\r", "\n", '|'], [' ', ' ', '/'], $value));
 
         return (string) str($value === '' ? '-' : $value)->limit(80);
+    }
+
+    private function developmentName(MiriamDevelopmentJob $job, ?MiriamDevelopmentPhaseRun $phaseRun, string $summary): string
+    {
+        $candidate = $job->title
+            ?: $phaseRun?->phase?->title
+            ?: $job->currentPhase?->title
+            ?: $summary
+            ?: 'Miriam development';
+
+        return $this->sixWordName($candidate);
+    }
+
+    private function developmentNameFromLedger(MiriamDevelopmentLedger $ledger): string
+    {
+        return $this->sixWordName($ledger->phase_name ?: $ledger->summary ?: $ledger->app_name ?: 'Miriam development');
+    }
+
+    private function shortDescription(MiriamDevelopmentJob $job, ?MiriamDevelopmentPhaseRun $phaseRun, string $summary): string
+    {
+        $candidate = $phaseRun?->phase?->description
+            ?: $summary
+            ?: $job->title
+            ?: 'Codex is running the assigned Miriam development work.';
+
+        return $this->shortSlackCell($candidate);
+    }
+
+    private function sixWordName(string $value): string
+    {
+        $words = preg_split('/\s+/', trim(Str::of($value)
+            ->replaceMatches('/[^\pL\pN\s-]+/u', ' ')
+            ->squish()
+            ->toString())) ?: [];
+        $name = implode(' ', array_slice(array_filter($words), 0, 6));
+
+        return $name !== '' ? $name : 'Miriam development';
     }
 
     private function isHistoricalLedger(MiriamDevelopmentLedger $ledger): bool

@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Models\MiriamDevelopmentFailure;
 use App\Models\MiriamDevelopmentJob;
+use App\Models\MiriamDevelopmentJobEvent;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 
 class MiriamDevelopmentApprovalNotifier
 {
@@ -78,9 +80,10 @@ class MiriamDevelopmentApprovalNotifier
             return ['sent' => false, 'reason' => 'missing_slack_channel'];
         }
 
-        $dedupeKey = $this->dedupeKey($job, $failure);
+        $reasonHash = sha1($reason);
+        $dedupeKey = $this->dedupeKey($job, $failure, $reasonHash);
 
-        if (Cache::has($dedupeKey)) {
+        if (Cache::has($dedupeKey) || $this->attentionNoticeAlreadySent($job, $failure, $reasonHash)) {
             return ['sent' => false, 'reason' => 'duplicate_suppressed'];
         }
 
@@ -91,17 +94,21 @@ class MiriamDevelopmentApprovalNotifier
             'phase' => $failure?->phase_run_id ?: $job->current_phase_id ?: 'none',
             'failure_id' => $failure?->id ?: 'none',
             'status' => $job->status,
-            'summary_hash' => sha1($reason),
-        ], $message['blocks']);
+            'summary_hash' => $reasonHash,
+        ]);
         $response = $result['response'] ?? [];
 
         Cache::put($dedupeKey, true, now()->addMinutes(self::DEDUPE_MINUTES));
 
-        if ($failure && ($response['ok'] ?? false)) {
-            $failure->update([
-                'slack_channel_id' => (string) ($response['channel'] ?? $channel),
-                'slack_message_ts' => (string) ($response['ts'] ?? $failure->slack_message_ts),
-            ]);
+        if ($response['ok'] ?? false) {
+            $this->recordAttentionNoticeSent($job, $failure, $reason, $reasonHash);
+
+            if ($failure) {
+                $failure->update([
+                    'slack_channel_id' => (string) ($response['channel'] ?? $channel),
+                    'slack_message_ts' => (string) ($response['ts'] ?? $failure->slack_message_ts),
+                ]);
+            }
         }
 
         return $result;
@@ -110,40 +117,32 @@ class MiriamDevelopmentApprovalNotifier
     private function message(MiriamDevelopmentJob $job, ?MiriamDevelopmentFailure $failure, string $reason): array
     {
         $appName = $job->managedApp?->name ?: 'Miriam';
-        $failureLine = $failure ? "Failure: #{$failure->id} / {$failure->failure_type} / {$failure->status}" : 'Failure: N/A';
         $autoFixAttempts = $failure ? $failure->fixAttempts->count() : 0;
         $recommended = $failure
             ? ($autoFixAttempts >= 3
-                ? 'Auto-repair reached 3 attempts. Review Show Error/root cause, then decide whether to fix manually, approve if validation passed, or stop the job.'
-                : 'Use Show Error, then Approve / Complete if validation passed. Stop the job if this should not continue.')
+                ? 'Review the blocker in Miriam, then approve continuation or stop the job.'
+                : 'Review the safety gate in Miriam and approve or reject it.')
             : ($job->status === 'waiting_for_approval'
                 ? 'Review the job in Development Manager before continuing.'
                 : 'Resolve the manual gate, then resume or stop the job.');
 
         $lines = [
-            $failure && $autoFixAttempts >= 3 ? '*Miriam phase blocked after auto-repair attempts*' : '*Miriam Development Manager needs approval*',
-            "App: {$appName}",
-            "Job: #{$job->id} / {$job->status}",
-            $failureLine,
+            'Codex needs your attention - please review',
+            'Development: '.$this->developmentName($job, $failure),
             "Reason: {$reason}",
-            "Recommended action: {$recommended}",
-            'No Codex execution, deployment, Git action, or shell command was triggered by this notification.',
+            "Required decision: {$recommended}",
         ];
 
         if ($failure) {
-            array_splice($lines, 4, 0, [
-                'Phase: '.($failure->phaseRun?->phase?->title ?: 'N/A'),
-                'Failed command: '.($failure->command ?: 'unknown'),
-                'Auto-fix attempts: '.$autoFixAttempts.'/3',
-                'Root cause: '.str($failure->summary ?: $failure->title)->limit(500),
-            ]);
+            $lines[] = 'Failure: #'.$failure->id.' / '.$failure->failure_type.' / '.$failure->status;
+            $lines[] = 'Auto-fix attempts: '.$autoFixAttempts.'/3';
         }
 
         $text = implode("\n", $lines);
 
         return [
             'text' => $text,
-            'blocks' => $this->blocks($job, $failure, $reason, $recommended),
+            'blocks' => [],
         ];
     }
 
@@ -234,17 +233,63 @@ class MiriamDevelopmentApprovalNotifier
         return $failure->summary ?: $failure->title;
     }
 
-    private function dedupeKey(MiriamDevelopmentJob $job, ?MiriamDevelopmentFailure $failure): string
+    private function dedupeKey(MiriamDevelopmentJob $job, ?MiriamDevelopmentFailure $failure, string $reasonHash): string
     {
         return 'miriam_dev_approval_notice:'.sha1(implode(':', [
             'job',
             $job->id,
-            $job->status,
             'failure',
             $failure?->id ?: 'none',
-            $failure?->failure_type ?: 'none',
-            $failure?->status ?: 'none',
+            $reasonHash,
         ]));
+    }
+
+    private function attentionNoticeAlreadySent(MiriamDevelopmentJob $job, ?MiriamDevelopmentFailure $failure, string $reasonHash): bool
+    {
+        if (! Schema::hasTable('miriam_development_job_events')) {
+            return false;
+        }
+
+        return MiriamDevelopmentJobEvent::query()
+            ->where('development_job_id', $job->id)
+            ->where('event_type', 'codex_attention_notice_sent')
+            ->where('meta_json', 'like', '%"reason_hash":"'.$reasonHash.'"%')
+            ->when($failure, fn ($query) => $query->where('phase_run_id', $failure->phase_run_id))
+            ->exists();
+    }
+
+    private function recordAttentionNoticeSent(MiriamDevelopmentJob $job, ?MiriamDevelopmentFailure $failure, string $reason, string $reasonHash): void
+    {
+        if (! Schema::hasTable('miriam_development_job_events')) {
+            return;
+        }
+
+        MiriamDevelopmentJobEvent::create([
+            'development_job_id' => $job->id,
+            'phase_run_id' => $failure?->phase_run_id,
+            'runner_agent_id' => $failure?->runner_agent_id ?: $job->runner_agent_id,
+            'event_type' => 'codex_attention_notice_sent',
+            'title' => 'Codex attention notice sent',
+            'body' => $reason,
+            'meta_json' => json_encode([
+                'failure_id' => $failure?->id,
+                'reason_hash' => $reasonHash,
+                'policy' => 'strict_codex_development_signal_only',
+            ], JSON_UNESCAPED_SLASHES),
+        ]);
+    }
+
+    private function developmentName(MiriamDevelopmentJob $job, ?MiriamDevelopmentFailure $failure): string
+    {
+        $candidate = $job->title
+            ?: $failure?->phaseRun?->phase?->title
+            ?: $job->currentPhase?->title
+            ?: $job->managedApp?->name
+            ?: 'Miriam development';
+        $words = preg_split('/\s+/', trim((string) str($candidate)->replaceMatches('/[^\pL\pN\s-]+/u', ' ')->squish())) ?: [];
+        $name = implode(' ', array_slice(array_filter($words), 0, 6));
+
+        return $name !== '' ? $name : 'Miriam development';
     }
 
     private function shouldSuppressNormalAutoFixFailure(MiriamDevelopmentFailure $failure): bool

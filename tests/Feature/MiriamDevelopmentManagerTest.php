@@ -954,12 +954,13 @@ class MiriamDevelopmentManagerTest extends TestCase
             'status' => 'completed',
             'test_result' => 'passed',
         ]);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development completed')
-            && str_contains((string) $request->body(), 'Full details stored in Miriam Development Ledger.')
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Codex completed development:')
+            && str_contains((string) $request->body(), 'Validation:')
+            && str_contains((string) $request->body(), 'Commit:')
             && ! str_contains((string) $request->body(), '| App |')
             && ! str_contains((string) $request->body(), 'mra_approval_notice')
             && ! str_contains((string) $request->body(), 'xoxb-test'));
-        Http::assertNotSent(fn ($request) => str_contains((string) $request->body(), 'Miriam Development Manager needs approval'));
+        Http::assertNotSent(fn ($request) => str_contains((string) $request->body(), 'Codex needs your attention'));
     }
 
     public function test_manual_validation_requested_stays_quiet_for_normal_failure(): void
@@ -996,7 +997,19 @@ class MiriamDevelopmentManagerTest extends TestCase
         $notifier->notifyFailureNeedsAttention($failure->fresh(['job.managedApp', 'phaseRun.phase', 'fixAttempts']));
 
         Http::assertSentCount(1);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Miriam Development Manager needs approval'));
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Codex needs your attention - please review')
+            && str_contains((string) $request->body(), 'Development:')
+            && str_contains((string) $request->body(), 'Required decision:'));
+        $this->assertDatabaseHas('miriam_development_job_events', [
+            'development_job_id' => $failure->development_job_id,
+            'event_type' => 'codex_attention_notice_sent',
+        ]);
+
+        Cache::flush();
+        $failure->update(['summary' => 'Production deploy approval is now required.']);
+        $notifier->notifyFailureNeedsAttention($failure->fresh(['job.managedApp', 'phaseRun.phase', 'fixAttempts']));
+
+        Http::assertSentCount(2);
     }
 
     public function test_proactive_slack_notification_does_not_expose_tokens_or_secrets(): void
@@ -1018,7 +1031,7 @@ class MiriamDevelopmentManagerTest extends TestCase
             $this->onePhasePayload()
         );
 
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development completed')
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Codex completed development:')
             && ! str_contains((string) $request->body(), '| App |')
             && ! str_contains((string) $request->body(), 'mra_do_not_leak_this_token')
             && ! str_contains((string) $request->body(), 'token_hash')
@@ -1289,7 +1302,7 @@ class MiriamDevelopmentManagerTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_safety_gate_manual_validation_still_requires_approval_card(): void
+    public function test_safety_gate_manual_validation_still_requires_attention_message(): void
     {
         $this->seedSlackContext();
         $runner = $this->runner('mra_safety_validation_approval', ['status' => 'active']);
@@ -1317,8 +1330,9 @@ class MiriamDevelopmentManagerTest extends TestCase
         ]);
 
         $this->assertSame('waiting_for_approval', $job->fresh()->status);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), "dev_approve_job:{$job->id}")
-            && str_contains((string) $request->body(), 'Safety gate validation passed'));
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Codex needs your attention - please review')
+            && str_contains((string) $request->body(), 'Safety gate validation passed')
+            && ! str_contains((string) $request->body(), "dev_approve_job:{$job->id}"));
     }
 
     public function test_slack_dev_resume_remains_for_paused_jobs_only(): void
@@ -1674,17 +1688,16 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->assertStringContainsString('Warning: 2 active/online runners appear to be on MAIN-PC', $text);
     }
 
-    public function test_smart_notification_policy_sends_only_started_completed_safety_and_blocker_signals(): void
+    public function test_smart_notification_policy_sends_only_started_completed_and_safety_signals(): void
     {
         $this->seedSlackContext();
         Cache::flush();
 
         $service = app(MiriamSmartSlackNotificationService::class);
-        $service->notifyDevelopmentStarted('ChurchForce', 'QA', 'Run validation.', 10, 20);
-        $service->notifyDevelopmentStarted('ChurchForce', 'QA', 'Run validation.', 10, 20);
-        $service->notifyDevelopmentCompleted('ChurchForce', [
-            'app' => 'ChurchForce',
-            'work_done' => 'QA complete',
+        $service->notifyDevelopmentStarted('ChurchForce QA', 'Run validation.', 10, 20);
+        $service->notifyDevelopmentStarted('ChurchForce QA', 'Run validation.', 10, 20);
+        $service->notifyDevelopmentCompleted('ChurchForce QA', [
+            'short_summary' => 'QA complete',
             'status' => 'completed',
             'commit' => 'abc123',
             'tests' => 'php artisan test',
@@ -1696,15 +1709,15 @@ class MiriamDevelopmentManagerTest extends TestCase
         $service->notify('validation_command', 'php artisan test line output', ['app' => 'churchforce']);
 
         Http::assertSentCount(2);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development started')
-            && str_contains((string) $request->body(), 'ChurchForce')
-            && str_contains((string) $request->body(), 'Stored in Miriam DB'));
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development completed')
-            && str_contains((string) $request->body(), 'Full details stored in Miriam Development Ledger.')
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Codex started development: ChurchForce QA')
+            && str_contains((string) $request->body(), 'Run validation.'));
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Codex completed development: ChurchForce QA')
+            && str_contains((string) $request->body(), 'Validation: php artisan test')
+            && str_contains((string) $request->body(), 'Commit: abc123')
             && ! str_contains((string) $request->body(), '| App |'));
     }
 
-    public function test_blocked_development_notifications_are_sent_once(): void
+    public function test_blocked_development_progress_notification_is_suppressed(): void
     {
         $this->seedSlackContext();
         Cache::flush();
@@ -1713,9 +1726,7 @@ class MiriamDevelopmentManagerTest extends TestCase
         $service->notifyDevelopmentBlocked('ChurchForce', 'Core Completion', 'Validation failed after 3 auto-repair attempts.', 42);
         $service->notifyDevelopmentBlocked('ChurchForce', 'Core Completion', 'Validation failed after 3 auto-repair attempts.', 42);
 
-        Http::assertSentCount(1);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Miriam development blocker')
-            && str_contains((string) $request->body(), 'Validation failed after 3 auto-repair attempts.'));
+        Http::assertNothingSent();
     }
 
     public function test_development_ledger_dashboard_shows_completed_current_due_and_blockers(): void
@@ -1800,10 +1811,44 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->assertSame('durable_started_duplicate_suppressed', $second['reason']);
         $this->assertNotNull($ledger->fresh()->started_notified_at);
         Http::assertSentCount(1);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development started')
-            && str_contains((string) $request->body(), 'Miriam Product Build')
-            && str_contains((string) $request->body(), 'Stored in Miriam DB')
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Codex started development:')
             && ! str_contains((string) $request->body(), '| App |'));
+    }
+
+    public function test_development_name_and_short_description_are_stored_in_ledger(): void
+    {
+        $runner = $this->runner('mra_signal_metadata', ['status' => 'active', 'last_seen_at' => now()]);
+        $this->promptProgram();
+        $job = app(MiriamDevelopmentManagerService::class)->startJobFromActiveProgram(options: ['runner_agent_id' => $runner->id]);
+        $phaseRun = $job->phaseRuns()->firstOrFail();
+
+        $ledger = app(\App\Services\MiriamDevelopmentLedgerService::class)
+            ->recordJob($job->fresh(), 'running', 'Build the strict Slack notification policy for Codex development.', $phaseRun, [
+                'development_name' => 'Strict Slack Policy',
+                'short_description' => 'Limit Codex Slack posts to start, completion, and approval gates.',
+            ]);
+
+        $this->assertSame('Strict Slack Policy', $ledger->development_name);
+        $this->assertSame('Limit Codex Slack posts to start, completion, and approval gates.', $ledger->short_description);
+        $this->assertLessThanOrEqual(6, str_word_count($ledger->development_name));
+        $this->assertDatabaseHas('miriam_development_ledgers', [
+            'id' => $ledger->id,
+            'development_name' => 'Strict Slack Policy',
+            'short_description' => 'Limit Codex Slack posts to start, completion, and approval gates.',
+        ]);
+    }
+
+    public function test_normal_progress_and_auto_fix_notifications_are_suppressed(): void
+    {
+        $this->seedSlackContext();
+        Cache::flush();
+
+        $service = app(MiriamSmartSlackNotificationService::class);
+        $service->notify('development_progress', 'Running tests now.', ['job_id' => 99]);
+        $service->notify('auto_fix_attempt', 'Auto-fix attempt 1/3.', ['job_id' => 99]);
+        $service->notify('validation_command', 'php artisan route:list', ['job_id' => 99]);
+
+        Http::assertNothingSent();
     }
 
     public function test_completed_ledger_summary_notifies_once_with_durable_dedupe_key(): void
@@ -1842,8 +1887,9 @@ class MiriamDevelopmentManagerTest extends TestCase
         $this->assertNull($second->fresh()->summary_notified_at);
         $this->assertNull($third->fresh()->summary_notified_at);
         Http::assertSentCount(1);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Development completed')
-            && str_contains((string) $request->body(), 'Full details stored in Miriam Development Ledger.')
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Codex completed development:')
+            && str_contains((string) $request->body(), 'Validation: php artisan test')
+            && str_contains((string) $request->body(), 'Commit: abc123456789')
             && ! str_contains((string) $request->body(), '| App |')
             && ! str_contains((string) $request->body(), 'Changed: none recorded')
             && ! str_contains((string) $request->body(), 'Commit: none recorded')
@@ -2142,7 +2188,8 @@ class MiriamDevelopmentManagerTest extends TestCase
             ->notifyFailureNeedsAttention($failure->fresh(['job.managedApp', 'phaseRun.phase', 'fixAttempts']));
 
         Http::assertSentCount(1);
-        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Miriam phase blocked after auto-repair attempts')
+        Http::assertSent(fn ($request) => str_contains((string) $request->body(), 'Codex needs your attention - please review')
+            && str_contains((string) $request->body(), 'Required decision:')
             && str_contains((string) $request->body(), 'Auto-fix attempts')
             && str_contains((string) $request->body(), '3\\/3'));
     }

@@ -15,6 +15,8 @@ class MiriamDevelopmentLedger extends Model
         'phase_run_id',
         'phase_id',
         'phase_name',
+        'development_name',
+        'short_description',
         'status',
         'summary',
         'files_changed_json',

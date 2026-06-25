@@ -196,7 +196,10 @@ class DevelopmentFailureRecoveryService
             return ['action' => 'none'];
         }
 
-        $lastEvent = $job->events()->latest()->first();
+        $lastEvent = $job->events()
+            ->whereIn('event_type', ['rollback_requested', 'manual_validation_requested'])
+            ->latest()
+            ->first();
 
         if ($job->status === 'cancelled' || $failure->status === 'stopped') {
             return ['action' => 'stop_job', 'failure_id' => $failure->id];

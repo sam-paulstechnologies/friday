@@ -13,7 +13,6 @@ class MiriamSmartSlackNotificationService
         'development_started',
         'development_completed',
         'safety_gate',
-        'blocker',
     ];
 
     public function notify(string $type, string $text, array $context = [], array $blocks = []): array
@@ -58,25 +57,37 @@ class MiriamSmartSlackNotificationService
         ]);
     }
 
-    public function notifyDevelopmentStarted(string $app, string $work, string $goal, ?int $jobId = null, ?int $phaseId = null): array
+    public function notifyDevelopmentStarted(string $developmentName, string $shortDescription, ?int $jobId = null, ?int $phaseId = null): array
     {
-        return $this->notify('development_started', 'Development started', [
-            'app' => $app,
+        return $this->notify('development_started', implode("\n", [
+            "Codex started development: {$developmentName}",
+            $shortDescription,
+        ]), [
+            'app' => $developmentName,
             'job_id' => $jobId,
             'phase' => $phaseId ?: 'none',
             'status' => 'started',
-        ], $this->developmentStartedBlocks($app, $goal));
+        ]);
     }
 
-    public function notifyDevelopmentCompleted(string $app, array $summary, ?int $jobId = null, ?int $phaseId = null, array $context = []): array
+    public function notifyDevelopmentCompleted(string $developmentName, array $summary, ?int $jobId = null, ?int $phaseId = null, array $context = []): array
     {
-        return $this->notify('development_completed', 'Development completed', array_merge([
-            'app' => $app,
+        $shortSummary = (string) ($summary['short_summary'] ?? $summary['work_done'] ?? 'Development completed.');
+        $tests = (string) ($summary['tests'] ?? 'not recorded');
+        $commit = (string) ($summary['commit'] ?? '-');
+
+        return $this->notify('development_completed', implode("\n", [
+            "Codex completed development: {$developmentName}",
+            $shortSummary,
+            "Validation: {$tests}",
+            "Commit: {$commit}",
+        ]), array_merge([
+            'app' => $developmentName,
             'job_id' => $jobId,
             'phase' => $phaseId ?: 'none',
             'status' => (string) ($summary['status'] ?? 'completed'),
             'summary_hash' => sha1(json_encode($summary)),
-        ], $context), $this->developmentCompletedBlocks($summary));
+        ], $context));
     }
 
     public function notifyDevelopmentSummary(string $app, string $summary, ?int $jobId = null, ?string $status = null, array $context = []): array
@@ -86,18 +97,7 @@ class MiriamSmartSlackNotificationService
 
     public function notifyDevelopmentBlocked(string $app, string $phase, string $rootCause, ?int $jobId = null): array
     {
-        return $this->notify('blocker', implode("\n", [
-            '*Miriam development blocker*',
-            "App: {$app}",
-            "Phase: {$phase}",
-            "Root cause: {$rootCause}",
-            'Normal auto-repair attempts are complete or a human decision is needed.',
-        ]), [
-            'app' => $app,
-            'phase' => $phase,
-            'job_id' => $jobId,
-            'failure' => sha1($rootCause),
-        ]);
+        return ['sent' => false, 'reason' => 'blocker_progress_notification_suppressed'];
     }
 
     public function notifyHardSafetyBlocker(string $app, string $phase, string $rootCause, ?int $jobId = null): array
@@ -128,53 +128,6 @@ class MiriamSmartSlackNotificationService
             $context['summary_hash'] ?? 'none',
             $context['notification_dedupe_key'] ?? 'none',
         ]));
-    }
-
-    private function developmentStartedBlocks(string $app, string $goal): array
-    {
-        return [
-            [
-                'type' => 'header',
-                'text' => ['type' => 'plain_text', 'text' => 'Development started'],
-            ],
-            [
-                'type' => 'section',
-                'fields' => [
-                    $this->field('App', $app),
-                    $this->field('Goal', $goal),
-                    $this->field('Started at', now()->toDateTimeString()),
-                    $this->field('Details', 'Stored in Miriam DB'),
-                ],
-            ],
-        ];
-    }
-
-    private function developmentCompletedBlocks(array $summary): array
-    {
-        return [
-            [
-                'type' => 'header',
-                'text' => ['type' => 'plain_text', 'text' => 'Development completed'],
-            ],
-            [
-                'type' => 'section',
-                'fields' => [
-                    $this->field('App', (string) ($summary['app'] ?? 'Miriam')),
-                    $this->field('Work done', (string) ($summary['work_done'] ?? '-')),
-                    $this->field('Status', (string) ($summary['status'] ?? '-')),
-                    $this->field('Commit', (string) ($summary['commit'] ?? '-')),
-                    $this->field('Tests', (string) ($summary['tests'] ?? '-')),
-                    $this->field('Deployment', (string) ($summary['deployment'] ?? '-')),
-                    $this->field('Next', (string) ($summary['next'] ?? '-')),
-                ],
-            ],
-            [
-                'type' => 'context',
-                'elements' => [
-                    ['type' => 'mrkdwn', 'text' => 'Full details stored in Miriam Development Ledger.'],
-                ],
-            ],
-        ];
     }
 
     private function field(string $label, string $value): array
