@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Miriam",
+    "slug": "miriam",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "scheme": "miriam",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.paulstechnologies.miriam"
+    },
+    "android": {
+      "package": "com.paulstechnologies.miriam",
+      "adaptiveIcon": {
+        "backgroundColor": "#16201f"
+      }
+    },
+    "extra": {
+      "apiBaseUrl": "https://friday.paulstechnologies.com"
+    }
+  }
+}
