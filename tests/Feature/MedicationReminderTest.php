@@ -1060,6 +1060,228 @@ class MedicationReminderTest extends TestCase
         $this->assertSame('optional reason', $log->fresh()->skip_reason);
     }
 
+    public function test_previous_day_overdue_dose_with_newer_same_schedule_is_closed_by_cleanup(): void
+    {
+        [$user] = $this->context();
+        $schedule = $this->schedule($user, ['schedule_time' => '09:00:00']);
+        $old = $this->doseLog($schedule, [
+            'dose_date' => '2026-06-29',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-29 05:00:00', 'UTC'),
+            'status' => 'overdue',
+            'reminder_attempts' => 128,
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 03:00:00', 'UTC'),
+        ]);
+        $this->doseLog($schedule, [
+            'dose_date' => '2026-06-30',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
+            'status' => 'pending',
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
+        ]);
+
+        $result = app(MedicationReminderService::class)->closeStaleOverdueLogs(CarbonImmutable::parse('2026-06-30 04:00:00', 'UTC'));
+
+        $this->assertSame(2, $result['inspected']);
+        $this->assertSame(1, $result['closed']);
+        $this->assertSame('skipped', $old->fresh()->status);
+        $this->assertNull($old->fresh()->next_reminder_at);
+        $this->assertSame('stale_overdue_cleanup', $old->fresh()->acknowledgement_source);
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $old->id,
+            'event_type' => 'stale_overdue_closed',
+            'channel' => 'system',
+        ]);
+    }
+
+    public function test_quiet_hours_do_not_roll_stale_previous_day_logs_forward(): void
+    {
+        [$user] = $this->context();
+        $schedule = $this->schedule($user, [
+            'dose_key' => 'evening',
+            'label' => 'Evening medication',
+            'schedule_time' => '21:30:00',
+        ]);
+        $old = $this->doseLog($schedule, [
+            'dose_date' => '2026-06-29',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-29 17:30:00', 'UTC'),
+            'status' => 'overdue',
+            'reminder_attempts' => 12,
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 19:01:00', 'UTC'),
+        ]);
+        $today = $this->doseLog($schedule, [
+            'dose_date' => '2026-06-30',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-30 17:30:00', 'UTC'),
+            'status' => 'pending',
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 17:30:00', 'UTC'),
+        ]);
+
+        app(MedicationReminderService::class)->queueDueReminders(
+            CarbonImmutable::parse('2026-06-30 19:01:00', 'UTC'),
+            sync: true,
+            channel: 'test-database'
+        );
+
+        $this->assertSame('skipped', $old->fresh()->status);
+        $this->assertNull($old->fresh()->next_reminder_at);
+        $this->assertSame('overdue', $today->fresh()->status);
+        $this->assertSame('2026-07-01 03:00:00', $today->fresh()->next_reminder_at->toDateTimeString());
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $old->id,
+            'event_type' => 'stale_overdue_closed',
+        ]);
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $today->id,
+            'event_type' => 'reminder_suppressed_quiet_hours',
+        ]);
+    }
+
+    public function test_slack_taken_on_newer_dose_closes_older_overdue_logs_for_same_schedule(): void
+    {
+        [$user] = $this->context();
+        $schedule = $this->schedule($user, ['schedule_time' => '09:00:00']);
+        $old = $this->doseLog($schedule, [
+            'dose_date' => '2026-06-29',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-29 05:00:00', 'UTC'),
+            'status' => 'critical_overdue',
+            'reminder_attempts' => 40,
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
+        ]);
+        $newer = $this->doseLog($schedule, [
+            'dose_date' => '2026-06-30',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
+            'status' => 'overdue',
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 05:30:00', 'UTC'),
+        ]);
+
+        $this->postSignedSlackAction('medication_taken', $newer->id)->assertOk();
+
+        $this->assertSame('taken', $newer->fresh()->status);
+        $this->assertNull($newer->fresh()->next_reminder_at);
+        $this->assertSame('skipped', $old->fresh()->status);
+        $this->assertNull($old->fresh()->next_reminder_at);
+        $this->assertSame('stale_overdue_cleanup_after_taken', $old->fresh()->acknowledgement_source);
+        $this->assertDatabaseHas('medication_reminder_events', [
+            'dose_log_id' => $old->id,
+            'event_type' => 'stale_overdue_closed',
+        ]);
+    }
+
+    public function test_today_pending_dose_is_not_closed_by_stale_cleanup(): void
+    {
+        [$user] = $this->context();
+        $schedule = $this->schedule($user, ['schedule_time' => '09:00:00']);
+        $today = $this->doseLog($schedule, [
+            'dose_date' => '2026-06-30',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
+            'status' => 'pending',
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
+        ]);
+
+        $result = app(MedicationReminderService::class)->closeStaleOverdueLogs(CarbonImmutable::parse('2026-06-30 08:00:00', 'UTC'));
+
+        $this->assertSame(0, $result['closed']);
+        $this->assertSame('pending', $today->fresh()->status);
+        $this->assertNotNull($today->fresh()->next_reminder_at);
+    }
+
+    public function test_today_overdue_dose_still_nags_until_taken_or_skipped(): void
+    {
+        [$user] = $this->context();
+        $this->schedule($user, [
+            'schedule_time' => '09:00:00',
+            'quiet_hours_start' => null,
+            'quiet_hours_end' => null,
+        ]);
+        $this->travelToDubai('2026-06-30 10:01:00');
+
+        app(MedicationReminderService::class)->queueDueReminders(sync: true, channel: 'test-database');
+        $log = MedicationDoseLog::firstOrFail();
+
+        $this->assertSame('critical_overdue', $log->status);
+        $this->assertSame(1, $log->reminder_attempts);
+        $this->assertNotNull($log->next_reminder_at);
+        $this->assertDatabaseMissing('medication_reminder_events', [
+            'dose_log_id' => $log->id,
+            'event_type' => 'stale_overdue_closed',
+        ]);
+    }
+
+    public function test_tomorrows_dose_can_still_be_scheduled_after_stale_cleanup(): void
+    {
+        [$user] = $this->context();
+        $schedule = $this->schedule($user, ['schedule_time' => '09:00:00']);
+        $this->doseLog($schedule, [
+            'dose_date' => '2026-06-29',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-29 05:00:00', 'UTC'),
+            'status' => 'overdue',
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 03:00:00', 'UTC'),
+        ]);
+        $this->doseLog($schedule, [
+            'dose_date' => '2026-06-30',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
+            'status' => 'taken',
+            'acknowledged_at' => CarbonImmutable::parse('2026-06-30 05:05:00', 'UTC'),
+            'next_reminder_at' => null,
+        ]);
+
+        app(MedicationReminderService::class)->closeStaleOverdueLogs(CarbonImmutable::parse('2026-06-30 06:00:00', 'UTC'));
+        $this->travelToDubai('2026-07-01 09:01:00');
+        $tomorrow = app(MedicationReminderService::class)->ensureLogForSchedule($schedule->fresh());
+
+        $this->assertSame('2026-07-01', $tomorrow->dose_date->toDateString());
+        $this->assertSame('pending', $tomorrow->status);
+        $this->assertSame('2026-07-01 05:00:00', $tomorrow->scheduled_for->toDateTimeString());
+    }
+
+    public function test_stale_overdue_cleanup_command_is_idempotent(): void
+    {
+        [$user] = $this->context();
+        $schedule = $this->schedule($user, ['schedule_time' => '09:00:00']);
+        $old = $this->doseLog($schedule, [
+            'dose_date' => '2026-06-29',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-29 05:00:00', 'UTC'),
+            'status' => 'overdue',
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 03:00:00', 'UTC'),
+        ]);
+        $this->doseLog($schedule, [
+            'dose_date' => '2026-06-30',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
+            'status' => 'pending',
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
+        ]);
+
+        $this->artisan('medication:close-stale-overdue', ['--pretend-now' => '2026-06-30 08:00'])
+            ->expectsOutputToContain('closed=1')
+            ->assertExitCode(0);
+        $this->artisan('medication:close-stale-overdue', ['--pretend-now' => '2026-06-30 08:00'])
+            ->expectsOutputToContain('closed=0')
+            ->assertExitCode(0);
+
+        $this->assertSame('skipped', $old->fresh()->status);
+        $this->assertSame(1, $old->events()->where('event_type', 'stale_overdue_closed')->count());
+    }
+
+    public function test_slack_taken_is_idempotent_when_clicked_twice(): void
+    {
+        [$user] = $this->context();
+        $schedule = $this->schedule($user, ['schedule_time' => '09:00:00']);
+        $log = $this->doseLog($schedule, [
+            'dose_date' => '2026-06-30',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
+            'status' => 'overdue',
+            'reminder_attempts' => 3,
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 05:30:00', 'UTC'),
+        ]);
+
+        $this->postSignedSlackAction('medication_taken', $log->id)->assertOk();
+        $this->postSignedSlackAction('medication_taken', $log->id)->assertOk();
+
+        $this->assertSame('taken', $log->fresh()->status);
+        $this->assertNull($log->fresh()->next_reminder_at);
+        $this->assertSame(3, $log->fresh()->reminder_attempts);
+        $this->assertSame(1, $log->events()->where('event_type', 'taken')->count());
+        $this->assertSame(2, $log->events()->where('event_type', 'slack_taken_clicked')->count());
+    }
+
     private function context(): array
     {
         $user = User::factory()->create();
@@ -1104,6 +1326,21 @@ class MedicationReminderTest extends TestCase
                     ['name' => 'Aterpen 10mg/20mg', 'timing' => 'Morning after breakfast'],
                 ],
             ],
+        ], $overrides));
+    }
+
+    private function doseLog(MedicationDoseSchedule $schedule, array $overrides = []): MedicationDoseLog
+    {
+        return MedicationDoseLog::create(array_merge([
+            'dose_schedule_id' => $schedule->id,
+            'user_id' => $schedule->user_id,
+            'workspace_id' => $schedule->workspace_id,
+            'dose_date' => '2026-06-30',
+            'scheduled_for' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
+            'scheduled_timezone' => $schedule->timezone ?: MedicationReminderService::DEFAULT_TIMEZONE,
+            'status' => 'pending',
+            'reminder_attempts' => 0,
+            'next_reminder_at' => CarbonImmutable::parse('2026-06-30 05:00:00', 'UTC'),
         ], $overrides));
     }
 
