@@ -6,13 +6,13 @@ use App\Services\Health\MedicationReminderService;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 
-class CloseStaleOverdueMedicationLogs extends Command
+class RepairDuplicateMedicationDoseLogs extends Command
 {
-    protected $signature = 'medication:close-stale-overdue
-        {--dry-run : Inspect stale overdue dose logs without changing them}
+    protected $signature = 'medication:repair-duplicate-dose-logs
+        {--dry-run : Inspect duplicate active dose logs without changing them}
         {--pretend-now= : Test-only current time in Asia/Dubai}';
 
-    protected $description = 'Close active medication dose logs whose finite response window has passed.';
+    protected $description = 'Safely supersede duplicate active medication dose logs without deleting records.';
 
     public function handle(MedicationReminderService $reminders): int
     {
@@ -21,10 +21,10 @@ class CloseStaleOverdueMedicationLogs extends Command
             ? CarbonImmutable::parse($pretendNow, MedicationReminderService::DEFAULT_TIMEZONE)->utc()
             : CarbonImmutable::now('UTC');
 
-        $result = $reminders->closeStaleOverdueLogs($now, (bool) $this->option('dry-run'));
+        $result = $reminders->repairDuplicateActiveDoseLogs($now, (bool) $this->option('dry-run'));
 
         $this->info(sprintf(
-            'Medication response-window cleanup%s: inspected=%d closed=%d skipped=%d.',
+            'Medication duplicate dose log repair%s: inspected=%d closed=%d skipped=%d.',
             $result['dry_run'] ? ' dry-run' : '',
             $result['inspected'],
             $result['closed'],

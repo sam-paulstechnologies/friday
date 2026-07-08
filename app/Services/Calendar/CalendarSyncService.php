@@ -102,6 +102,14 @@ class CalendarSyncService
             return ['status' => 'skipped', 'reason' => 'not_connected'];
         }
 
+        if (blank($connection->access_token)) {
+            return ['status' => 'skipped', 'reason' => 'missing_access_token'];
+        }
+
+        if ($connection->token_expires_at && $connection->token_expires_at->isPast() && blank($connection->refresh_token)) {
+            return ['status' => 'skipped', 'reason' => 'expired_without_refresh_token'];
+        }
+
         $existingProviderEventId = $this->existingMedicationProviderEventId($log);
 
         try {

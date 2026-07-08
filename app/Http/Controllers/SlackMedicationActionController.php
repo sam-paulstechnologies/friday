@@ -68,27 +68,32 @@ class SlackMedicationActionController extends Controller
 
     private function snooze(MedicationDoseLog $log, MedicationReminderService $reminders, ?string $slackUser): JsonResponse
     {
+        $alreadyAcknowledged = in_array($log->status, MedicationReminderService::ACKNOWLEDGED_STATUSES, true);
         $reminders->recordSlackButtonClick($log, 'slack_snooze_clicked', [
             'slack_user_id' => $slackUser,
             'minutes' => 15,
-            'already_acknowledged' => in_array($log->status, MedicationReminderService::ACKNOWLEDGED_STATUSES, true),
+            'already_acknowledged' => $alreadyAcknowledged,
         ]);
 
-        if (! in_array($log->status, MedicationReminderService::ACKNOWLEDGED_STATUSES, true)) {
-            $reminders->snooze($log, 15, 'slack', 'slack');
-        }
+        $updated = $reminders->snooze($log, 15, 'slack', 'slack');
 
-        return $this->slackResponse('Snoozed for 15 minutes.');
+        return $this->slackResponse($alreadyAcknowledged || $updated->status !== 'snoozed'
+            ? 'That medication reminder is already closed.'
+            : 'Snoozed for 15 minutes.');
     }
 
     private function skip(MedicationDoseLog $log, MedicationReminderService $reminders, ?string $slackUser): JsonResponse
     {
         $reminders->recordSlackButtonClick($log, 'slack_skip_clicked', [
             'slack_user_id' => $slackUser,
-            'requires_reason' => true,
+            'already_acknowledged' => in_array($log->status, MedicationReminderService::ACKNOWLEDGED_STATUSES, true),
         ]);
 
-        return $this->slackResponse('Open Miriam to enter a skip reason: '.route('health.index'));
+        if (! in_array($log->status, MedicationReminderService::ACKNOWLEDGED_STATUSES, true)) {
+            $reminders->skip($log, null, 'slack', 'slack');
+        }
+
+        return $this->slackResponse('Confirmed. Medication skipped.');
     }
 
     private function fail(MedicationDoseLog $log, MedicationReminderService $reminders, string $message, ?string $action, ?string $slackUser): JsonResponse

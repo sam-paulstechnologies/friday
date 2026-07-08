@@ -19,9 +19,12 @@ use Throwable;
 class MedicationReminderService
 {
     public const DEFAULT_TIMEZONE = 'Asia/Dubai';
-    public const ACKNOWLEDGED_STATUSES = ['taken', 'skipped'];
-    public const DUE_REMINDER_STATUSES = ['pending', 'overdue', 'snoozed', 'critical_overdue'];
+    public const ACKNOWLEDGED_STATUSES = ['taken', 'skipped', 'not_responded', 'missed', 'superseded', 'stale'];
+    public const DUE_REMINDER_STATUSES = ['pending', 'overdue', 'snoozed'];
     private const MORNING_DEADLINE_TIME = '10:00:00';
+    private const MORNING_FINAL_CUTOFF_TIME = '12:00:00';
+    private const EVENING_FINAL_CUTOFF_TIME = '23:30:00';
+    private const DEFAULT_RESPONSE_WINDOW_MINUTES = 120;
     private const CRITICAL_REPEAT_MINUTES = 5;
     private const WEDNESDAY_ISO = 3;
 
@@ -130,8 +133,29 @@ class MedicationReminderService
         $doseDate = $localNow->toDateString();
         $scheduledFor = $this->scheduledFor($schedule, $doseDate);
 
+        $logs = $this->doseLogsForIdentity($schedule->id, $schedule->user_id, $schedule->workspace_id, $doseDate)
+            ->with('schedule')
+            ->get();
+
+        if ($logs->isNotEmpty()) {
+            $log = $this->canonicalLogFrom($logs);
+            $this->closeDuplicateActiveLogsForCanonical($log, $now, 'duplicate_dose_log_superseded');
+
+            return $log->fresh(['schedule']);
+        }
+
+        if ($this->finalResponseCutoffForSchedule($schedule, $doseDate)->lessThanOrEqualTo($now)) {
+            return null;
+        }
+
         $log = MedicationDoseLog::query()
             ->where('dose_schedule_id', $schedule->id)
+            ->where('user_id', $schedule->user_id)
+            ->when(
+                $schedule->workspace_id === null,
+                fn ($query) => $query->whereNull('workspace_id'),
+                fn ($query) => $query->where('workspace_id', $schedule->workspace_id),
+            )
             ->whereDate('dose_date', $doseDate)
             ->first();
 
@@ -169,9 +193,14 @@ class MedicationReminderService
         $logs = MedicationDoseLog::query()
             ->with(['schedule', 'user'])
             ->whereIn('status', self::DUE_REMINDER_STATUSES)
+            ->whereNull('acknowledged_at')
             ->whereNotNull('next_reminder_at')
             ->where('next_reminder_at', '<=', $nowUtc)
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
             ->get();
+        $dueCandidateCount = $logs->count();
+        $logs = $this->deduplicateDueLogs($logs, $now);
 
         $queued = 0;
         $suppressed = 0;
@@ -189,6 +218,17 @@ class MedicationReminderService
                 continue;
             }
 
+            if ($this->closeIfFinalResponseCutoffPassed($log, $now)) {
+                $skipped[] = [
+                    'dose_log_id' => $log->id,
+                    'status' => 'not_responded',
+                    'next_reminder_at' => null,
+                    'reason' => 'final response cutoff passed',
+                ];
+
+                continue;
+            }
+
             if ($this->closeIfStaleOverdue($log, $now)) {
                 $skipped[] = [
                     'dose_log_id' => $log->id,
@@ -200,7 +240,7 @@ class MedicationReminderService
                 continue;
             }
 
-            if ($this->isQuietTime($log->schedule, $now)) {
+            if ($this->isQuietTime($log->schedule, $now, $log)) {
                 if ($this->suppressForQuietHours($log, $now)) {
                     $suppressed++;
                 }
@@ -226,7 +266,7 @@ class MedicationReminderService
         return [
             'queued' => $queued,
             'quiet_hours_suppressed' => $suppressed,
-            'due_candidate_count' => $logs->count(),
+            'due_candidate_count' => $dueCandidateCount,
             'current_utc' => $nowUtc,
             'skipped' => $skipped,
             'stale_overdue_closed' => $staleCleanup['closed'],
@@ -249,7 +289,21 @@ class MedicationReminderService
                 return null;
             }
 
-            if (in_array($log->status, self::ACKNOWLEDGED_STATUSES, true)) {
+            $latest = $this->latestDoseLogForIdentity($log);
+            if ($latest && $latest->id !== $log->id) {
+                if ($this->isActiveReminderLog($log)) {
+                    $this->closeSupersededDoseLog($log, $now, 'queued_job_latest_log_recheck', $latest);
+                }
+                $this->recordEvent($log->fresh(['schedule']), 'duplicate_prevented', $channel, metadata: [
+                    'reason' => 'newer_dose_log_exists',
+                    'latest_dose_log_id' => $latest->id,
+                    'latest_status' => $latest->status,
+                ]);
+
+                return $log->fresh(['schedule']);
+            }
+
+            if (! $this->isActiveReminderLog($log)) {
                 $this->recordEvent($log, 'duplicate_prevented', $channel);
 
                 return $log;
@@ -261,11 +315,15 @@ class MedicationReminderService
                 return $log;
             }
 
+            if ($this->closeIfFinalResponseCutoffPassed($log, $now)) {
+                return $log->refresh();
+            }
+
             if ($this->closeIfStaleOverdue($log, $now)) {
                 return $log->refresh();
             }
 
-            if ($this->isQuietTime($log->schedule, $now)) {
+            if ($this->isQuietTime($log->schedule, $now, $log)) {
                 $this->suppressForQuietHours($log, $now);
 
                 return $log->refresh();
@@ -307,25 +365,33 @@ class MedicationReminderService
 
     public function markTaken(MedicationDoseLog $log, string $source = 'web', string $channel = 'web'): MedicationDoseLog
     {
-        $acknowledged = $this->acknowledge($log, 'taken', $source, $channel);
-        $this->closeOlderStaleLogsForSchedule($acknowledged, CarbonImmutable::now('UTC'), 'stale_overdue_cleanup_after_taken');
-
-        return $acknowledged;
+        return $this->acknowledge($log, 'taken', $source, $channel);
     }
 
     public function skip(MedicationDoseLog $log, ?string $reason = null, string $source = 'web', string $channel = 'web'): MedicationDoseLog
     {
-        abort_if(blank($reason), 422, 'A skip reason is required.');
-
         return $this->acknowledge($log, 'skipped', $source, $channel, $reason);
     }
 
     public function snooze(MedicationDoseLog $log, int $minutes = 30, string $source = 'web', string $channel = 'web'): MedicationDoseLog
     {
-        $log->loadMissing('schedule');
-        abort_if(in_array($log->status, self::ACKNOWLEDGED_STATUSES, true), 422, 'This dose is already acknowledged.');
+        $log = MedicationDoseLog::query()
+            ->with('schedule')
+            ->whereKey($log->id)
+            ->firstOrFail();
 
         $now = CarbonImmutable::now('UTC');
+        if (! $this->isActiveReminderLog($log) || $this->closeIfFinalResponseCutoffPassed($log, $now)) {
+            $fresh = $log->fresh(['schedule']);
+            $this->recordEvent($fresh, 'snooze_ignored', $channel, metadata: [
+                'source' => $source,
+                'status' => $fresh->status,
+                'reason' => 'dose_not_active',
+            ]);
+
+            return $fresh;
+        }
+
         $snoozedUntil = $this->snoozeUntil($log, $now, max(5, min($minutes, 240)));
         $log->update([
             'status' => 'snoozed',
@@ -360,8 +426,9 @@ class MedicationReminderService
 
         $items = $logs->map(function (MedicationDoseLog $log) use ($now): array {
             $schedule = $log->schedule;
-            $overdue = $log->scheduled_for && $log->scheduled_for->lessThan($now) && ! in_array($log->status, self::ACKNOWLEDGED_STATUSES, true);
-            $critical = $this->isPastHardDeadline($log, $now) && ! in_array($log->status, self::ACKNOWLEDGED_STATUSES, true);
+            $active = $this->isActiveReminderLog($log);
+            $overdue = $log->scheduled_for && $log->scheduled_for->lessThan($now) && $active;
+            $critical = $this->isPastHardDeadline($log, $now) && $active;
 
             return [
                 'id' => $log->id,
@@ -373,7 +440,7 @@ class MedicationReminderService
                 'medication_count' => count($this->medicationItems($schedule)),
                 'schedule_time' => $schedule?->schedule_time,
                 'timezone' => $log->scheduled_timezone,
-                'status' => $critical ? 'critical_overdue' : ($overdue && $log->status === 'pending' ? 'overdue' : $log->status),
+                'status' => $overdue && $log->status === 'pending' ? 'overdue' : $log->status,
                 'scheduled_for' => $log->scheduled_for?->toDateTimeString(),
                 'scheduled_for_local' => $log->scheduled_for?->copy()->setTimezone($log->scheduled_timezone)->format('Y-m-d H:i'),
                 'reminder_attempts' => $log->reminder_attempts,
@@ -433,7 +500,8 @@ class MedicationReminderService
         $now = ($now ?? CarbonImmutable::now('UTC'))->utc();
         $query = MedicationDoseLog::query()
             ->with('schedule')
-            ->whereIn('status', self::DUE_REMINDER_STATUSES);
+            ->whereIn('status', self::DUE_REMINDER_STATUSES)
+            ->whereNull('acknowledged_at');
 
         if ($scheduleId !== null) {
             $query->where('dose_schedule_id', $scheduleId);
@@ -448,14 +516,14 @@ class MedicationReminderService
             foreach ($logs as $log) {
                 $inspected++;
 
-                if (! $this->isStaleOverdueLog($log, $now)) {
+                if (! $this->finalResponseCutoffHasPassed($log, $now)) {
                     $skipped++;
 
                     continue;
                 }
 
                 if (! $dryRun) {
-                    $this->closeStaleOverdueLog($log, $now, 'stale_overdue_cleanup');
+                    $this->closeUnrespondedDoseLog($log, $now, 'final_response_window_closed');
                 }
 
                 $closed++;
@@ -484,19 +552,22 @@ class MedicationReminderService
         $logs = MedicationDoseLog::query()
             ->with('schedule')
             ->where('dose_schedule_id', $newerLog->dose_schedule_id)
+            ->where('user_id', $newerLog->user_id)
+            ->when(
+                $newerLog->workspace_id === null,
+                fn ($query) => $query->whereNull('workspace_id'),
+                fn ($query) => $query->where('workspace_id', $newerLog->workspace_id),
+            )
             ->whereKeyNot($newerLog->id)
             ->whereIn('status', self::DUE_REMINDER_STATUSES)
-            ->whereDate('dose_date', '<', $newerLog->dose_date)
+            ->whereNull('acknowledged_at')
+            ->whereDate('dose_date', '<=', $newerLog->dose_date)
             ->get();
 
         $closedIds = [];
 
         foreach ($logs as $log) {
-            if (! $this->isStaleOverdueLog($log, $now, $newerLog)) {
-                continue;
-            }
-
-            $this->closeStaleOverdueLog($log, $now, $source, $newerLog);
+            $this->closeSupersededDoseLog($log, $now, $source, $newerLog);
             $closedIds[] = $log->id;
         }
 
@@ -508,31 +579,117 @@ class MedicationReminderService
         ];
     }
 
+    public function repairDuplicateActiveDoseLogs(?CarbonImmutable $now = null, bool $dryRun = false): array
+    {
+        $now = ($now ?? CarbonImmutable::now('UTC'))->utc();
+        $logs = MedicationDoseLog::query()
+            ->with('schedule')
+            ->whereIn('status', self::DUE_REMINDER_STATUSES)
+            ->whereNull('acknowledged_at')
+            ->orderBy('dose_schedule_id')
+            ->orderBy('user_id')
+            ->orderBy('workspace_id')
+            ->orderBy('dose_date')
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
+            ->get();
+
+        $inspected = $logs->count();
+        $closed = 0;
+        $skipped = 0;
+        $closedIds = [];
+
+        $logs->groupBy(fn (MedicationDoseLog $log): string => $this->identityKey($log))
+            ->each(function (Collection $group) use ($now, $dryRun, &$closed, &$skipped, &$closedIds): void {
+                if ($group->count() < 2) {
+                    $skipped += $group->count();
+
+                    return;
+                }
+
+                $canonical = $this->canonicalLogFrom($group);
+
+                if ($this->finalResponseCutoffHasPassed($canonical, $now)) {
+                    foreach ($group as $log) {
+                        if (! $dryRun) {
+                            $this->closeUnrespondedDoseLog($log, $now, 'duplicate_cleanup_final_cutoff');
+                        }
+                        $closed++;
+                        $closedIds[] = $log->id;
+                    }
+
+                    return;
+                }
+
+                foreach ($group as $log) {
+                    if ($log->id === $canonical->id) {
+                        $skipped++;
+
+                        continue;
+                    }
+
+                    if (! $dryRun) {
+                        $this->closeSupersededDoseLog($log, $now, 'duplicate_cleanup', $canonical);
+                    }
+                    $closed++;
+                    $closedIds[] = $log->id;
+                }
+
+                $canonical->refresh();
+            });
+
+        return [
+            'inspected' => $inspected,
+            'closed' => $closed,
+            'skipped' => $skipped,
+            'closed_ids' => $closedIds,
+            'dry_run' => $dryRun,
+        ];
+    }
+
     private function acknowledge(MedicationDoseLog $log, string $status, string $source, string $channel, ?string $reason = null): MedicationDoseLog
     {
-        $log->loadMissing('schedule');
-        $now = CarbonImmutable::now('UTC');
-        $log->update([
-            'status' => $status,
-            'acknowledged_at' => $now,
-            'next_reminder_at' => null,
-            'acknowledgement_source' => $source,
-            'acknowledgement_channel' => $channel,
-            'skip_reason' => $status === 'skipped' ? $reason : null,
-        ]);
+        return DB::transaction(function () use ($log, $status, $source, $channel, $reason): MedicationDoseLog {
+            $locked = MedicationDoseLog::query()
+                ->with('schedule')
+                ->whereKey($log->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $this->recordEvent($log->fresh(['schedule']), $status, $channel, metadata: [
-            'source' => $source,
-            'has_skip_reason' => filled($reason),
-        ]);
+            if (! $this->isActiveReminderLog($locked)) {
+                return $locked->fresh(['schedule']);
+            }
 
-        $this->syncDailyHealthStatus($log->fresh(), $status);
+            $now = CarbonImmutable::now('UTC');
+            $locked->update([
+                'status' => $status,
+                'acknowledged_at' => $now,
+                'next_reminder_at' => null,
+                'acknowledgement_source' => $source,
+                'acknowledgement_channel' => $channel,
+                'skip_reason' => $status === 'skipped' ? $reason : null,
+            ]);
 
-        return $log->fresh(['schedule']);
+            $fresh = $locked->fresh(['schedule']);
+            $this->recordEvent($fresh, $status, $channel, metadata: [
+                'source' => $source,
+                'has_skip_reason' => filled($reason),
+            ]);
+
+            $this->closeDuplicateActiveLogsForCanonical($fresh, $now, $status.'_duplicate_closure');
+            $this->closeOlderStaleLogsForSchedule($fresh, $now, $status.'_stale_closure');
+            $this->syncDailyHealthStatus($fresh, $status);
+
+            return $fresh->fresh(['schedule']);
+        });
     }
 
     private function suppressForQuietHours(MedicationDoseLog $log, CarbonImmutable $now): bool
     {
+        if ($this->closeIfFinalResponseCutoffPassed($log, $now)) {
+            return false;
+        }
+
         if ($this->closeIfStaleOverdue($log, $now)) {
             return false;
         }
@@ -552,73 +709,241 @@ class MedicationReminderService
 
     private function closeIfStaleOverdue(MedicationDoseLog $log, CarbonImmutable $now): bool
     {
-        if (! $this->isStaleOverdueLog($log, $now)) {
+        $latest = $this->latestDoseLogForIdentity($log);
+
+        if (! $latest || $latest->id === $log->id) {
             return false;
         }
 
-        $this->closeStaleOverdueLog($log, $now, 'stale_overdue_cleanup');
+        $this->closeSupersededDoseLog($log, $now, 'stale_duplicate_cleanup', $latest);
 
         return true;
     }
 
-    private function isStaleOverdueLog(MedicationDoseLog $log, CarbonImmutable $now, ?MedicationDoseLog $knownNewerLog = null): bool
+    private function closeIfFinalResponseCutoffPassed(MedicationDoseLog $log, CarbonImmutable $now): bool
     {
-        $log->loadMissing('schedule');
-
-        if (! $log->schedule || ! in_array($log->status, self::DUE_REMINDER_STATUSES, true) || ! $log->dose_date) {
+        if (! $this->finalResponseCutoffHasPassed($log, $now)) {
             return false;
         }
 
-        $timezone = $log->schedule->timezone ?: $log->scheduled_timezone ?: self::DEFAULT_TIMEZONE;
-        $currentDoseDate = $now->setTimezone($timezone)->toDateString();
+        $this->closeUnrespondedDoseLog($log, $now, 'final_response_window_closed');
 
-        if ($log->dose_date->toDateString() >= $currentDoseDate) {
-            return false;
-        }
-
-        if ($knownNewerLog) {
-            return $knownNewerLog->dose_schedule_id === $log->dose_schedule_id
-                && $knownNewerLog->dose_date
-                && $knownNewerLog->dose_date->toDateString() > $log->dose_date->toDateString();
-        }
-
-        return MedicationDoseLog::query()
-            ->where('dose_schedule_id', $log->dose_schedule_id)
-            ->whereDate('dose_date', '>', $log->dose_date->toDateString())
-            ->exists();
+        return true;
     }
 
-    private function closeStaleOverdueLog(MedicationDoseLog $log, CarbonImmutable $now, string $source, ?MedicationDoseLog $newerLog = null): MedicationDoseLog
+    private function finalResponseCutoffHasPassed(MedicationDoseLog $log, CarbonImmutable $now): bool
     {
-        if (in_array($log->status, self::ACKNOWLEDGED_STATUSES, true)) {
+        $cutoff = $this->finalResponseCutoffAt($log);
+
+        return $cutoff->lessThanOrEqualTo($now);
+    }
+
+    private function closeSupersededDoseLog(MedicationDoseLog $log, CarbonImmutable $now, string $source, ?MedicationDoseLog $canonicalLog = null): MedicationDoseLog
+    {
+        if (! $this->isActiveReminderLog($log)) {
             return $log->fresh(['schedule']);
         }
 
         $metadata = array_merge($log->metadata ?? [], [
-            'stale_overdue_closed' => true,
-            'stale_overdue_source' => $source,
-            'closed_because' => 'newer_dose_log_exists',
-            'newer_dose_log_id' => $newerLog?->id,
+            'superseded_closed' => true,
+            'superseded_source' => $source,
+            'closed_because' => 'duplicate_active_dose_log',
+            'canonical_dose_log_id' => $canonicalLog?->id,
         ]);
 
         $log->update([
-            'status' => 'skipped',
-            'acknowledged_at' => $now,
+            'status' => 'superseded',
             'acknowledgement_source' => $source,
             'acknowledgement_channel' => 'system',
             'next_reminder_at' => null,
-            'skip_reason' => 'Closed automatically because a newer dose log exists for this schedule.',
             'metadata' => $metadata,
         ]);
 
         $fresh = $log->fresh(['schedule']);
-        $this->recordEvent($fresh, 'stale_overdue_closed', 'system', metadata: [
+        $this->recordEvent($fresh, 'duplicate_dose_log_superseded', 'system', metadata: [
             'source' => $source,
-            'newer_dose_log_id' => $newerLog?->id,
+            'canonical_dose_log_id' => $canonicalLog?->id,
             'dose_date' => $fresh->dose_date?->toDateString(),
         ]);
 
         return $fresh;
+    }
+
+    private function closeUnrespondedDoseLog(MedicationDoseLog $log, CarbonImmutable $now, string $source): MedicationDoseLog
+    {
+        if (! $this->isActiveReminderLog($log)) {
+            return $log->fresh(['schedule']);
+        }
+
+        $metadata = array_merge($log->metadata ?? [], [
+            'final_response_window_closed' => true,
+            'final_response_window_source' => $source,
+            'final_response_cutoff_at' => $this->finalResponseCutoffAt($log)->toIso8601String(),
+        ]);
+
+        $log->update([
+            'status' => 'not_responded',
+            'acknowledgement_source' => $source,
+            'acknowledgement_channel' => 'system',
+            'next_reminder_at' => null,
+            'metadata' => $metadata,
+        ]);
+
+        $fresh = $log->fresh(['schedule']);
+        $this->recordEvent($fresh, 'dose_marked_not_responded', 'system', metadata: [
+            'source' => $source,
+            'dose_date' => $fresh->dose_date?->toDateString(),
+            'final_response_cutoff_at' => $this->finalResponseCutoffAt($fresh)->toIso8601String(),
+        ]);
+
+        return $fresh;
+    }
+
+    private function deduplicateDueLogs(Collection $logs, CarbonImmutable $now): Collection
+    {
+        return $logs
+            ->groupBy(fn (MedicationDoseLog $log): string => $this->identityKey($log))
+            ->map(function (Collection $group) use ($now): MedicationDoseLog {
+                $canonical = $this->canonicalLogFrom($group);
+                $this->closeDuplicateActiveLogsForCanonical($canonical, $now, 'due_query_duplicate_superseded');
+
+                return $canonical->fresh(['schedule', 'user']);
+            })
+            ->filter(fn (MedicationDoseLog $log): bool => $this->isActiveReminderLog($log))
+            ->values();
+    }
+
+    private function closeDuplicateActiveLogsForCanonical(MedicationDoseLog $canonicalLog, CarbonImmutable $now, string $source): array
+    {
+        $canonicalLog->loadMissing('schedule');
+
+        if (! $canonicalLog->dose_date) {
+            return ['closed' => 0, 'closed_ids' => []];
+        }
+
+        $duplicates = $this->doseLogsForIdentity(
+            $canonicalLog->dose_schedule_id,
+            $canonicalLog->user_id,
+            $canonicalLog->workspace_id,
+            $canonicalLog->dose_date->toDateString()
+        )
+            ->with('schedule')
+            ->whereKeyNot($canonicalLog->id)
+            ->whereIn('status', self::DUE_REMINDER_STATUSES)
+            ->whereNull('acknowledged_at')
+            ->get();
+
+        $closedIds = [];
+
+        foreach ($duplicates as $duplicate) {
+            $this->closeSupersededDoseLog($duplicate, $now, $source, $canonicalLog);
+            $closedIds[] = $duplicate->id;
+        }
+
+        return ['closed' => count($closedIds), 'closed_ids' => $closedIds];
+    }
+
+    private function canonicalLogFrom(Collection $logs): MedicationDoseLog
+    {
+        $active = $logs->filter(fn (MedicationDoseLog $log): bool => $this->isActiveReminderLog($log));
+        $pool = $active->isNotEmpty() ? $active : $logs;
+
+        return $pool
+            ->sortByDesc(fn (MedicationDoseLog $log): string => sprintf(
+                '%s-%010d',
+                $log->updated_at?->format('YmdHis.u') ?? '00000000000000.000000',
+                $log->id
+            ))
+            ->first();
+    }
+
+    private function latestDoseLogForIdentity(MedicationDoseLog $log): ?MedicationDoseLog
+    {
+        if (! $log->dose_date) {
+            return null;
+        }
+
+        return $this->doseLogsForIdentity(
+            $log->dose_schedule_id,
+            $log->user_id,
+            $log->workspace_id,
+            $log->dose_date->toDateString()
+        )
+            ->with('schedule')
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    private function doseLogsForIdentity(int $scheduleId, int $userId, ?int $workspaceId, string $doseDate)
+    {
+        return MedicationDoseLog::query()
+            ->where('dose_schedule_id', $scheduleId)
+            ->where('user_id', $userId)
+            ->when(
+                $workspaceId === null,
+                fn ($query) => $query->whereNull('workspace_id'),
+                fn ($query) => $query->where('workspace_id', $workspaceId),
+            )
+            ->whereDate('dose_date', $doseDate);
+    }
+
+    private function identityKey(MedicationDoseLog $log): string
+    {
+        return implode('|', [
+            $log->dose_schedule_id,
+            $log->user_id,
+            $log->workspace_id ?? 'null',
+            $log->dose_date?->toDateString() ?? 'none',
+        ]);
+    }
+
+    private function isActiveReminderLog(MedicationDoseLog $log): bool
+    {
+        return $log->acknowledged_at === null
+            && in_array($log->status, self::DUE_REMINDER_STATUSES, true);
+    }
+
+    private function finalResponseCutoffAt(MedicationDoseLog $log): CarbonImmutable
+    {
+        $log->loadMissing('schedule');
+
+        if (! $log->schedule) {
+            $scheduledFor = $this->immutableUtc($log->scheduled_for ?? CarbonImmutable::now('UTC'));
+
+            return $scheduledFor->addMinutes(self::DEFAULT_RESPONSE_WINDOW_MINUTES);
+        }
+
+        $timezone = $log->schedule->timezone ?: $log->scheduled_timezone ?: self::DEFAULT_TIMEZONE;
+        $doseDate = $log->dose_date?->toDateString()
+            ?: $this->immutableUtc($log->scheduled_for ?? CarbonImmutable::now('UTC'))->setTimezone($timezone)->toDateString();
+
+        return $this->finalResponseCutoffForSchedule($log->schedule, $doseDate);
+    }
+
+    private function finalResponseCutoffForSchedule(MedicationDoseSchedule $schedule, string $doseDate): CarbonImmutable
+    {
+        $timezone = $schedule->timezone ?: self::DEFAULT_TIMEZONE;
+        $configured = $schedule->metadata['final_response_cutoff_time'] ?? null;
+        $cutoffTime = filled($configured) ? $this->normalizeTime($configured) : match ($schedule->dose_key) {
+            'morning' => self::MORNING_FINAL_CUTOFF_TIME,
+            'evening' => self::EVENING_FINAL_CUTOFF_TIME,
+            default => null,
+        };
+
+        if ($cutoffTime) {
+            return CarbonImmutable::createFromFormat('Y-m-d H:i:s', $doseDate.' '.$cutoffTime, $timezone)->utc();
+        }
+
+        return $this->scheduledFor($schedule, $doseDate)
+            ->setTimezone($timezone)
+            ->addMinutes(self::DEFAULT_RESPONSE_WINDOW_MINUTES)
+            ->utc();
+    }
+
+    private function normalizeTime(string $time): string
+    {
+        return strlen($time) === 5 ? $time.':00' : $time;
     }
 
     private function scheduledFor(MedicationDoseSchedule $schedule, string $doseDate): CarbonImmutable
@@ -659,9 +984,13 @@ class MedicationReminderService
             ->all();
     }
 
-    private function isQuietTime(MedicationDoseSchedule $schedule, CarbonImmutable $now): bool
+    private function isQuietTime(MedicationDoseSchedule $schedule, CarbonImmutable $now, ?MedicationDoseLog $log = null): bool
     {
         if (! $schedule->quiet_hours_start || ! $schedule->quiet_hours_end) {
+            return false;
+        }
+
+        if ($log && $schedule->dose_key === 'evening' && $now->lessThan($this->finalResponseCutoffAt($log))) {
             return false;
         }
 
@@ -702,10 +1031,6 @@ class MedicationReminderService
 
     private function reminderStatus(MedicationDoseLog $log, CarbonImmutable $now): string
     {
-        if ($this->isPastHardDeadline($log, $now)) {
-            return 'critical_overdue';
-        }
-
         if ($log->scheduled_for && $this->immutableUtc($log->scheduled_for)->lessThanOrEqualTo($now)) {
             return 'overdue';
         }
@@ -724,7 +1049,7 @@ class MedicationReminderService
         $scheduledFor = $this->immutableUtc($log->scheduled_for);
 
         if ($now->greaterThanOrEqualTo($deadline)) {
-            return 'critical_overdue';
+            return 'overdue';
         }
 
         if ($now->greaterThanOrEqualTo($deadline->subMinutes(5))) {
@@ -748,16 +1073,24 @@ class MedicationReminderService
         return 'normal';
     }
 
-    private function nextReminderAt(MedicationDoseLog $log, CarbonImmutable $now): CarbonImmutable
+    private function nextReminderAt(MedicationDoseLog $log, CarbonImmutable $now): ?CarbonImmutable
     {
         $deadline = $this->hardDeadlineAt($log);
+        $finalCutoff = $this->finalResponseCutoffAt($log);
+
+        if ($now->greaterThanOrEqualTo($finalCutoff)) {
+            return null;
+        }
 
         if (! $deadline || ! $log->scheduled_for) {
-            return $now->addMinutes(max(5, (int) $log->schedule->repeat_interval_minutes));
+            return $this->clampToFinalCutoff(
+                $now->addMinutes(max(5, (int) $log->schedule->repeat_interval_minutes)),
+                $finalCutoff
+            );
         }
 
         if ($now->greaterThanOrEqualTo($deadline)) {
-            return $now->addMinutes(self::CRITICAL_REPEAT_MINUTES);
+            return $this->clampToFinalCutoff($now->addMinutes(self::CRITICAL_REPEAT_MINUTES), $finalCutoff);
         }
 
         $scheduledFor = $this->immutableUtc($log->scheduled_for);
@@ -772,23 +1105,20 @@ class MedicationReminderService
             ->sortBy(fn (CarbonImmutable $candidate) => $candidate->getTimestamp())
             ->values();
 
-        return $candidates->first() ?: $deadline;
+        return $this->clampToFinalCutoff($candidates->first() ?: $deadline, $finalCutoff);
     }
 
     private function snoozeUntil(MedicationDoseLog $log, CarbonImmutable $now, int $minutes): CarbonImmutable
     {
         $requested = $now->addMinutes($minutes);
-        $deadline = $this->hardDeadlineAt($log);
+        $finalCutoff = $this->finalResponseCutoffAt($log);
 
-        if (! $deadline) {
-            return $requested;
-        }
+        return $requested->lessThanOrEqualTo($finalCutoff) ? $requested : $finalCutoff;
+    }
 
-        if ($now->greaterThanOrEqualTo($deadline)) {
-            return $now->addMinutes(self::CRITICAL_REPEAT_MINUTES);
-        }
-
-        return $requested->lessThanOrEqualTo($deadline) ? $requested : $deadline;
+    private function clampToFinalCutoff(CarbonImmutable $candidate, CarbonImmutable $finalCutoff): CarbonImmutable
+    {
+        return $candidate->lessThanOrEqualTo($finalCutoff) ? $candidate : $finalCutoff;
     }
 
     private function isPastHardDeadline(MedicationDoseLog $log, CarbonImmutable $now): bool
@@ -912,34 +1242,47 @@ class MedicationReminderService
     {
         $result = $this->calendarSyncService->syncMedicationReminder($log);
         $status = $result['status'] ?? 'skipped';
-
-        $this->recordEvent($log, match ($status) {
+        $eventType = match ($status) {
             'created' => 'calendar_event_created',
             'updated' => 'calendar_event_updated',
             'failed' => 'calendar_event_failed',
             default => 'calendar_event_skipped',
-        }, 'google_calendar', metadata: array_filter([
+        };
+        $reason = $result['reason'] ?? null;
+
+        if (in_array($eventType, ['calendar_event_failed', 'calendar_event_skipped'], true)
+            && $this->calendarEventAlreadyRecorded($log, $eventType, $reason)) {
+            return;
+        }
+
+        $this->recordEvent($log, $eventType, 'google_calendar', metadata: array_filter([
             'provider_event_id' => $result['provider_event_id'] ?? null,
-            'reason' => $result['reason'] ?? null,
+            'reason' => $reason,
             'exception' => $result['exception'] ?? null,
         ], fn ($value) => $value !== null && $value !== ''));
     }
 
+    private function calendarEventAlreadyRecorded(MedicationDoseLog $log, string $eventType, ?string $reason): bool
+    {
+        return $log->events()
+            ->where('event_type', $eventType)
+            ->get()
+            ->contains(fn (MedicationReminderEvent $event): bool => ($event->metadata['reason'] ?? null) === $reason);
+    }
+
     private function slackReminderMessage(MedicationDoseSchedule $schedule, string $escalationLevel): string
     {
-        if ($schedule->hide_details_in_notifications) {
-            return match ($escalationLevel) {
-                'critical_overdue' => 'Critical Miriam medication reminder: this is overdue. Please confirm Taken or Skip.',
-                'urgent', 'final_pre_deadline' => 'Urgent Miriam medication reminder: this is still pending. Please confirm before 10:00.',
-                default => 'Medication reminder: scheduled medication is due.',
-            };
+        if ($escalationLevel === 'overdue') {
+            return $schedule->hide_details_in_notifications
+                ? 'Medication is overdue. Please mark Taken or Skip.'
+                : trim("Medication is overdue. Please mark Taken or Skip. {$schedule->label}: {$schedule->dosage_text} {$schedule->timing_note}.");
         }
 
-        return match ($escalationLevel) {
-            'critical_overdue' => trim("Critical Miriam medication reminder: {$schedule->label} is overdue. {$schedule->dosage_text} {$schedule->timing_note}. Please confirm Taken or Skip."),
-            'urgent', 'final_pre_deadline' => trim("Urgent Miriam medication reminder: {$schedule->label} is still pending. {$schedule->dosage_text} {$schedule->timing_note}. Please confirm before 10:00."),
-            default => trim("Miriam medication reminder: {$schedule->label}: {$schedule->dosage_text} {$schedule->timing_note}. Please confirm Taken, Snooze, or Skip."),
-        };
+        if ($schedule->hide_details_in_notifications) {
+            return 'Please take your medication.';
+        }
+
+        return trim("Please take your medication. {$schedule->label}: {$schedule->dosage_text} {$schedule->timing_note}.");
     }
 
     private function slackReminderPayload(MedicationDoseLog $log, string $escalationLevel): array
