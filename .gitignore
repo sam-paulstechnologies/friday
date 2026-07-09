@@ -3,8 +3,12 @@
 /public/build
 /public/hot
 /public/storage
+/.local-runtime/
+/test-results/
+/exports/
 /storage/*.key
 /storage/pail
+/storage/PsySH/
 /vendor
 backups/
 .env
@@ -17,6 +21,8 @@ Homestead.yaml
 npm-debug.log
 yarn-error.log
 /auth.json
+/mobile/miriam-app/.expo-local/
+/mobile/miriam-app/android/app/*.keystore
 /.fleet
 /.idea
 /.nova
