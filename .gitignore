@@ -23,6 +23,10 @@ yarn-error.log
 /auth.json
 /mobile/miriam-app/.expo-local/
 /mobile/miriam-app/android/app/*.keystore
+tools/miriam-runner/runner-config.local.json
+tools/miriam-runner/*.local.json
+tools/miriam-runner/runner-config.*.json
+!tools/miriam-runner/runner-config.example.json
 /.fleet
 /.idea
 /.nova
