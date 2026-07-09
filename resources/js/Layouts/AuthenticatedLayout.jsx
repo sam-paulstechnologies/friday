@@ -9,11 +9,11 @@ const groups = [
     {
         label: 'Work',
         items: [
-            { name: 'Dashboard', href: route('dashboard'), activeRoutes: ['dashboard'], icon: 'home' },
-            { name: 'My Day', href: route('today.index'), activeRoutes: ['today.*'], icon: 'target' },
+            { name: 'Today', href: route('today.index'), activeRoutes: ['today.*'], icon: 'target' },
             { name: 'Inbox', href: route('notifications.index'), activeRoutes: ['notifications.*'], icon: 'inbox' },
             { name: 'Tasks', href: route('tasks.index'), activeRoutes: ['tasks.*', 'task-review.*', 'prioritization-review.*'], icon: 'check' },
             { name: 'Projects', href: route('projects.index'), activeRoutes: ['projects.*'], icon: 'folder' },
+            { name: 'Dashboard', href: route('dashboard'), activeRoutes: ['dashboard'], icon: 'home' },
             { name: 'Planner', href: route('planner.index'), activeRoutes: ['planner.*', 'calendar.*', 'workload.*'], icon: 'calendar' },
             { name: 'Reports', href: route('reports.index'), activeRoutes: ['reports.*', 'goals.*', 'portfolios.*', 'areas.*'], icon: 'chart' },
             { name: 'Assistant', href: route('assistant.index'), activeRoutes: ['assistant.*'], icon: 'spark' },
@@ -187,7 +187,7 @@ export default function AuthenticatedLayout({ title = 'Home', subtitle, actions,
                             <span className="sr-only">Open navigation</span>
                             <span className="h-4 w-5 border-y-2 border-current" />
                         </button>
-                        <Link href={route('dashboard')} className="hidden text-sm font-semibold text-slate-950 sm:block">Miriam</Link>
+                        <Link href={route('today.index')} className="hidden text-sm font-semibold text-slate-950 sm:block">Miriam</Link>
 
                         <form onSubmit={submitSearch} className="min-w-0 flex-1">
                             <input

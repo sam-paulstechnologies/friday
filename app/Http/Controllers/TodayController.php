@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Task;
 use App\Services\DailyReview\DailyReviewService;
 use App\Services\Spiritual\SpiritualReadingSummaryService;
+use App\Services\TodayCommandCenterService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Inertia\Inertia;
@@ -15,7 +16,8 @@ class TodayController extends Controller
     public function index(
         Request $request,
         DailyReviewService $dailyReviewService,
-        SpiritualReadingSummaryService $spiritualReadingSummaryService
+        SpiritualReadingSummaryService $spiritualReadingSummaryService,
+        TodayCommandCenterService $commandCenter
     ): Response
     {
         $groups = $dailyReviewService->collectTodayTasks($request->user());
@@ -34,10 +36,11 @@ class TodayController extends Controller
                 'blocked_waiting' => $groups->get('blocked')->count() + $groups->get('waiting')->count(),
             ],
             'dailyReview' => [
-                'morning' => 'Due today, scheduled today, overdue, and reading plan are ready for planning.',
-                'evening' => 'Completed today is separated; unfinished overdue and missed work can be moved forward manually.',
+                'morning' => 'Critical, overdue, waiting, Codex, medication, product focus, and backlog are separated for fast triage.',
+                'evening' => 'Completed work stays separate; unresolved overdue and blocked work remains visible until cleared.',
             ],
             'reading' => $spiritualReadingSummaryService->forUser($request->user()),
+            'commandCenter' => $commandCenter->forUser($request->user()),
         ]);
     }
 
