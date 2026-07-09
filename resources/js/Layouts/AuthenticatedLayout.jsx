@@ -11,6 +11,8 @@ const groups = [
         items: [
             { name: 'Today', href: route('today.index'), activeRoutes: ['today.*'], icon: 'target' },
             { name: 'Inbox', href: route('notifications.index'), activeRoutes: ['notifications.*'], icon: 'inbox' },
+            { name: 'Agents', href: route('agents.index'), activeRoutes: ['agents.index'], icon: 'layers' },
+            { name: 'Agent Orchestrator', href: route('agents.orchestrator.index'), activeRoutes: ['agents.orchestrator.*', 'agents.outputs.*'], icon: 'spark' },
             { name: 'Task Capture Agent', href: route('agents.task-capture.index'), activeRoutes: ['agents.task-capture.*'], icon: 'spark' },
             { name: 'Tasks', href: route('tasks.index'), activeRoutes: ['tasks.*', 'task-review.*', 'prioritization-review.*'], icon: 'check' },
             { name: 'Projects', href: route('projects.index'), activeRoutes: ['projects.*'], icon: 'folder' },

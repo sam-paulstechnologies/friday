@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Approval;
+use App\Models\AgentOutput;
 use App\Models\Blocker;
 use App\Models\MiriamDevelopmentFailure;
 use App\Models\MiriamDevelopmentJob;
@@ -251,8 +252,36 @@ class TodayCommandCenterService
                 'href' => route('waiting.index', [], false),
             ]);
 
+        $agentOutputs = AgentOutput::query()
+            ->with(['run.agent'])
+            ->whereHas('run', fn ($query) => $query->where('user_id', $user->id))
+            ->where('status', AgentOutput::STATUS_NEEDS_REVIEW)
+            ->whereNotNull('sent_to_today_at')
+            ->latest('sent_to_today_at')
+            ->limit(8)
+            ->get()
+            ->map(function (AgentOutput $output): array {
+                $run = $output->run;
+                $rootRunId = $run?->parent_run_id ?: $run?->id;
+                $context = $output->context_label ?: $run?->context_label ?: 'Miriam Agent OS';
+
+                return [
+                    'id' => 'agent-output-'.$output->id,
+                    'model_id' => $output->id,
+                    'kind' => 'agent_output',
+                    'title' => $output->title ?: $output->generated_task_title,
+                    'source' => $output->agent_name ?: $run?->agent?->name ?: 'Miriam Agent OS',
+                    'reason' => $context.' output needs approval before any action is taken.',
+                    'age' => $this->age($output->sent_to_today_at ?? $output->created_at),
+                    'primary_action' => 'Approve',
+                    'secondary_action' => 'Reject',
+                    'href' => route('agents.orchestrator.index', ['run' => $rootRunId], false),
+                ];
+            });
+
         return collect($approvals)
             ->merge(collect($development))
+            ->merge(collect($agentOutputs))
             ->merge(collect($waiting))
             ->sortBy(fn (array $item) => $item['kind'] === 'approval' ? 0 : 1)
             ->values()

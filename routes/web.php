@@ -1,8 +1,11 @@
 <?php
 
-use App\Http\Controllers\CalendarController;
 use App\Http\Controllers\ApprovalController;
+use App\Http\Controllers\Agents\AgentIndexController;
+use App\Http\Controllers\Agents\AgentOrchestratorController;
+use App\Http\Controllers\Agents\AgentOutputReviewController;
 use App\Http\Controllers\Agents\TaskCaptureAgentController;
+use App\Http\Controllers\CalendarController;
 use App\Http\Controllers\AreaController;
 use App\Http\Controllers\AssistantController;
 use App\Http\Controllers\BlockerController;
@@ -64,6 +67,13 @@ Route::middleware('auth')->group(function () {
     Route::get('/assistant', [AssistantController::class, 'index'])->name('assistant.index');
     Route::post('/assistant/message', [AssistantController::class, 'message'])->name('assistant.message');
     Route::post('/assistant/actions/create-task', [AssistantController::class, 'createTask'])->name('assistant.actions.create-task');
+    Route::get('/agents', AgentIndexController::class)->name('agents.index');
+    Route::get('/agents/orchestrator', [AgentOrchestratorController::class, 'index'])->name('agents.orchestrator.index');
+    Route::post('/agents/orchestrator/run', [AgentOrchestratorController::class, 'run'])->name('agents.orchestrator.run');
+    Route::post('/agents/orchestrator/run-agent', [AgentOrchestratorController::class, 'runAgent'])->name('agents.orchestrator.run-agent');
+    Route::post('/agents/outputs/{output}/approve', [AgentOutputReviewController::class, 'approve'])->name('agents.outputs.approve');
+    Route::post('/agents/outputs/{output}/reject', [AgentOutputReviewController::class, 'reject'])->name('agents.outputs.reject');
+    Route::post('/agents/outputs/{output}/send-to-today', [AgentOutputReviewController::class, 'sendToToday'])->name('agents.outputs.send-to-today');
     Route::get('/agents/task-capture', [TaskCaptureAgentController::class, 'index'])->name('agents.task-capture.index');
     Route::post('/agents/task-capture/run', [TaskCaptureAgentController::class, 'run'])->name('agents.task-capture.run');
     Route::get('/health', [HealthDisciplineController::class, 'index'])->name('health.index');
