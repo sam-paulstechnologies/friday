@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\CalendarController;
 use App\Http\Controllers\ApprovalController;
+use App\Http\Controllers\Agents\TaskCaptureAgentController;
 use App\Http\Controllers\AreaController;
 use App\Http\Controllers\AssistantController;
 use App\Http\Controllers\BlockerController;
@@ -63,6 +64,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/assistant', [AssistantController::class, 'index'])->name('assistant.index');
     Route::post('/assistant/message', [AssistantController::class, 'message'])->name('assistant.message');
     Route::post('/assistant/actions/create-task', [AssistantController::class, 'createTask'])->name('assistant.actions.create-task');
+    Route::get('/agents/task-capture', [TaskCaptureAgentController::class, 'index'])->name('agents.task-capture.index');
+    Route::post('/agents/task-capture/run', [TaskCaptureAgentController::class, 'run'])->name('agents.task-capture.run');
     Route::get('/health', [HealthDisciplineController::class, 'index'])->name('health.index');
     Route::post('/health/daily-log', [HealthDisciplineController::class, 'storeDailyLog'])->name('health.daily-log.store');
     Route::post('/health/medications', [HealthDisciplineController::class, 'storeMedication'])->name('health.medications.store');
