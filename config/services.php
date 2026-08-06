@@ -35,6 +35,10 @@ return [
         'miriam_channel_id' => env('SLACK_MIRIAM_CHANNEL_ID'),
         'webhook_url' => env('SLACK_WEBHOOK_URL'),
         'allowed_user_id' => env('SLACK_ALLOWED_USER_ID'),
+        // Read through config so behaviour is identical with and without
+        // `php artisan config:cache`; env() at runtime returns null once the
+        // config is cached, which silently changed who captures were filed to.
+        'daily_user_id' => env('TASKFLOW_DAILY_USER_ID'),
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),
             'channel' => env('SLACK_BOT_USER_DEFAULT_CHANNEL'),
@@ -52,6 +56,13 @@ return [
         'api_key' => env('OPENAI_API_KEY'),
         'model' => env('MIRIAM_AI_MODEL', 'gpt-5.4-mini'),
         'reasoning_effort' => env('MIRIAM_AI_REASONING_EFFORT', 'low'),
+    ],
+
+    'miriam_capture' => [
+        'pending_confirmation_minutes' => env('MIRIAM_CAPTURE_PENDING_CONFIRMATION_MINUTES', 720),
+        'second_poke_minutes' => env('MIRIAM_REMINDER_SECOND_POKE_MINUTES', 30),
+        'final_poke_minutes' => env('MIRIAM_REMINDER_FINAL_POKE_MINUTES', 120),
+        'max_pokes' => env('MIRIAM_REMINDER_MAX_POKES', 3),
     ],
 
     'google_calendar' => [

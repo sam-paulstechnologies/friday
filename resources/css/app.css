@@ -3,27 +3,98 @@
 @tailwind utilities;
 
 @layer base {
+    /**
+     * Miriam design tokens.
+     *
+     * Light-first, calm neutral canvas, one controlled accent, restrained
+     * semantic colours. Each ink/surface pair below meets WCAG AA.
+     */
     :root {
         color-scheme: light;
+
+        /* Surfaces */
+        --m-canvas: 247 248 250;
+        --m-surface: 255 255 255;
+        --m-surface-sunken: 249 250 251;
+        --m-surface-raised: 255 255 255;
+        --m-line: 226 231 237;
+        --m-line-strong: 203 213 225;
+
+        /* Text */
+        --m-ink: 17 24 39;
+        --m-ink-muted: 71 85 105;
+        --m-ink-subtle: 100 116 139;
+        --m-ink-inverse: 255 255 255;
+
+        /* Brand — indigo-violet, deliberately not Asana's coral trade dress. */
+        --m-brand-50: 238 240 255;
+        --m-brand-100: 224 228 255;
+        --m-brand-200: 199 205 253;
+        --m-brand-500: 90 92 214;
+        --m-brand-600: 76 78 191;
+        --m-brand-700: 61 63 156;
+
+        /* Semantics */
+        --m-urgent-soft: 254 233 235;
+        --m-urgent: 218 52 74;
+        --m-urgent-ink: 146 24 43;
+
+        --m-warn-soft: 254 243 220;
+        --m-warn: 202 138 4;
+        --m-warn-ink: 124 83 0;
+
+        --m-good-soft: 224 246 235;
+        --m-good: 22 145 92;
+        --m-good-ink: 15 100 64;
+
+        --m-info-soft: 227 240 254;
+        --m-info: 37 110 205;
+        --m-info-ink: 27 79 148;
+
+        /* Geometry */
+        --m-radius-control: 0.5rem;
+        --m-radius-panel: 0.75rem;
+        --m-sidebar-width: 15rem;
+        --m-sidebar-rail: 3.75rem;
+        --m-topbar-height: 3.5rem;
     }
 
     html {
         scroll-behavior: smooth;
     }
 
+    @media (prefers-reduced-motion: reduce) {
+        html {
+            scroll-behavior: auto;
+        }
+
+        *,
+        *::before,
+        *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+        }
+    }
+
     body {
-        @apply bg-[#f6f7fb] text-slate-950 antialiased;
+        @apply bg-canvas text-ink antialiased;
     }
 
     ::selection {
-        @apply bg-emerald-100 text-emerald-950;
+        @apply bg-brand-100 text-brand-700;
+    }
+
+    /* One consistent, always-visible keyboard focus treatment. */
+    :focus-visible {
+        @apply outline-none ring-2 ring-brand-500/60 ring-offset-2 ring-offset-surface;
     }
 }
 
 @layer components {
     .premium-scrollbar {
         scrollbar-width: thin;
-        scrollbar-color: theme('colors.slate.300') transparent;
+        scrollbar-color: rgb(var(--m-line-strong)) transparent;
     }
 
     .premium-scrollbar::-webkit-scrollbar {
@@ -32,10 +103,19 @@
     }
 
     .premium-scrollbar::-webkit-scrollbar-thumb {
-        @apply rounded-full bg-slate-300;
+        @apply rounded-full bg-line-strong;
     }
 
     .premium-scrollbar::-webkit-scrollbar-track {
         @apply bg-transparent;
+    }
+
+    /* Screen-reader-only until focused, then a real visible control. */
+    .skip-link:not(:focus) {
+        @apply sr-only;
+    }
+
+    .skip-link:focus {
+        @apply fixed left-4 top-4 z-toast rounded-control bg-brand-600 px-4 py-2 text-sm font-semibold text-ink-inverse shadow-overlay;
     }
 }

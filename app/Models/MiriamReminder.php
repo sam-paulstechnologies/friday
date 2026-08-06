@@ -10,6 +10,7 @@ class MiriamReminder extends Model
 {
     protected $fillable = [
         'user_id',
+        'task_id',
         'category',
         'item_type',
         'title',
@@ -24,7 +25,10 @@ class MiriamReminder extends Model
         'cancelled_at',
         'slack_user_id',
         'slack_channel_id',
+        'slack_workspace_id',
         'source_message_ts',
+        'source_thread_ts',
+        'source_dedupe_key',
         'google_calendar_event_id',
         'metadata',
     ];
@@ -45,6 +49,11 @@ class MiriamReminder extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function task(): BelongsTo
+    {
+        return $this->belongsTo(Task::class);
     }
 
     public function events(): HasMany

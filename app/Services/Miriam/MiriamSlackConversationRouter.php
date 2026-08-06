@@ -50,7 +50,7 @@ class MiriamSlackConversationRouter
 
         $tool = $selection['tool'] ?? null;
 
-        if (in_array($tool, ['create_reminder', 'create_task'], true) && ! Str::contains($this->normalize($text), 'tomorrow morning')) {
+        if (in_array($tool, ['create_reminder', 'create_task'], true)) {
             return ['handled' => false, 'intent' => (string) ($selection['intent'] ?? $intent)];
         }
 
@@ -72,7 +72,7 @@ class MiriamSlackConversationRouter
 
         return match ($intent) {
             'ignore' => ['handled' => true, 'intent' => $intent, 'text' => ''],
-            'general_question', 'unclear' => [
+            'general_question' => [
                 'handled' => true,
                 'intent' => $intent,
                 'text' => 'What would you like me to show or save?',

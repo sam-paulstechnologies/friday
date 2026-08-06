@@ -735,7 +735,9 @@ class MiriamReminderTest extends TestCase
             $labels = collect($payload['blocks'][1]['elements'])->pluck('text.text')->all();
 
             return $payload['channel'] === 'CMIRIAM'
-                && $payload['text'] === 'Miriam reminder: check the oven'
+                // Message prefix is plain "Reminder:" since the escalation
+                // refactor; the buttons are what this test is really about.
+                && $payload['text'] === 'Reminder: check the oven'
                 && in_array('Done', $labels, true)
                 && in_array('Snooze 15 min', $labels, true)
                 && in_array('Cancel', $labels, true);
@@ -757,14 +759,14 @@ class MiriamReminderTest extends TestCase
 
         $this->postSignedReminderAction('miriam_reminder_snooze_15', $reminder->id)
             ->assertOk()
-            ->assertJson(['text' => '⏰ Snoozed until 12:15 PM — call sunny']);
+            ->assertJson(['text' => 'Snoozed until 12:15 PM - call sunny']);
 
         $this->assertSame('snoozed', $reminder->fresh()->status);
         $this->assertNotNull($reminder->fresh()->next_reminder_at);
 
         $this->postSignedReminderAction('miriam_reminder_done', $reminder->id)
             ->assertOk()
-            ->assertJson(['text' => '✅ Done — call sunny']);
+            ->assertJson(['text' => 'Done - call sunny']);
 
         $this->assertSame('done', $reminder->fresh()->status);
         $this->assertNull($reminder->fresh()->next_reminder_at);
@@ -778,11 +780,11 @@ class MiriamReminderTest extends TestCase
 
         $this->postSignedReminderAction('miriam_reminder_done', $reminder->id)
             ->assertOk()
-            ->assertJson(['text' => '✅ Done — call jasion']);
+            ->assertJson(['text' => 'Done - call jasion']);
 
         $this->assertSame('done', $reminder->fresh()->status);
         $this->assertNull($reminder->fresh()->next_reminder_at);
-        $this->assertSlackMessageUpdated('✅ Done — call jasion');
+        $this->assertSlackMessageUpdated('Done - call jasion');
     }
 
     public function test_snooze_updates_slack_message_and_next_time(): void
@@ -793,11 +795,11 @@ class MiriamReminderTest extends TestCase
 
         $this->postSignedReminderAction('miriam_reminder_snooze_15', $reminder->id)
             ->assertOk()
-            ->assertJson(['text' => '⏰ Snoozed until 12:15 PM — check the oven']);
+            ->assertJson(['text' => 'Snoozed until 12:15 PM - check the oven']);
 
         $this->assertSame('snoozed', $reminder->fresh()->status);
         $this->assertSame('2026-06-23 08:15:00', $reminder->fresh()->next_reminder_at->format('Y-m-d H:i:s'));
-        $this->assertSlackMessageUpdated('⏰ Snoozed until 12:15 PM — check the oven');
+        $this->assertSlackMessageUpdated('Snoozed until 12:15 PM - check the oven');
     }
 
     public function test_cancel_updates_slack_message_and_status(): void
@@ -808,11 +810,11 @@ class MiriamReminderTest extends TestCase
 
         $this->postSignedReminderAction('miriam_reminder_cancel', $reminder->id)
             ->assertOk()
-            ->assertJson(['text' => '🛑 Cancelled — pay dewa']);
+            ->assertJson(['text' => 'Cancelled - pay dewa']);
 
         $this->assertSame('cancelled', $reminder->fresh()->status);
         $this->assertNull($reminder->fresh()->next_reminder_at);
-        $this->assertSlackMessageUpdated('🛑 Cancelled — pay dewa');
+        $this->assertSlackMessageUpdated('Cancelled - pay dewa');
     }
 
     public function test_duplicate_clicks_keep_current_terminal_status(): void
@@ -823,13 +825,13 @@ class MiriamReminderTest extends TestCase
 
         $this->postSignedReminderAction('miriam_reminder_done', $reminder->id)
             ->assertOk()
-            ->assertJson(['text' => '✅ Done — send invoice']);
+            ->assertJson(['text' => 'Done - send invoice']);
 
         CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-06-23 12:10:00', 'Asia/Dubai'));
 
         $this->postSignedReminderAction('miriam_reminder_cancel', $reminder->id)
             ->assertOk()
-            ->assertJson(['text' => '✅ Done — send invoice']);
+            ->assertJson(['text' => 'Done - send invoice']);
 
         $this->assertSame('done', $reminder->fresh()->status);
         $this->assertNull($reminder->fresh()->cancelled_at);
@@ -851,7 +853,7 @@ class MiriamReminderTest extends TestCase
 
         $this->postSignedReminderAction('miriam_reminder_cancel', $reminder->id, 'slack.medication.actions')
             ->assertOk()
-            ->assertJson(['text' => '🛑 Cancelled — send invoice']);
+            ->assertJson(['text' => 'Cancelled - send invoice']);
 
         $this->assertSame('cancelled', $reminder->fresh()->status);
         $this->assertNull($reminder->fresh()->next_reminder_at);

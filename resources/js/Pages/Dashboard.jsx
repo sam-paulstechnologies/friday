@@ -58,7 +58,7 @@ export default function Dashboard({
                         </div>
                         <div className="flex flex-wrap gap-2">
                             <Link href={route('tasks.create')} className={primaryButton}>Create task</Link>
-                            <Link href={route('prioritization-review.index')} className={secondaryButton}>Review priorities</Link>
+                            <Link href={route('inbox.index')} className={secondaryButton}>Open Inbox</Link>
                         </div>
                     </div>
                     </div>

@@ -1,6 +1,6 @@
 import { Badge, EmptyState, PageSection, inputClass, primaryButton, secondaryButton } from '@/Components/Ui';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, Link, useForm } from '@inertiajs/react';
+import { Head, Link, router, useForm } from '@inertiajs/react';
 
 const priorityTone = {
     high: 'bg-rose-50 text-rose-700 ring-rose-100',
@@ -203,6 +203,13 @@ function Metric({ label, children }) {
 }
 
 function OutputCard({ output }) {
+    // "Review as task" used to open an empty form and discard everything the
+    // agent had just parsed. It now sends the proposal - with the original
+    // wording - through the same capture pipeline as Slack and Quick Capture.
+    const sendToInbox = () => {
+        router.post(route('agents.task-capture.capture', output.id), {}, { preserveScroll: true });
+    };
+
     return (
         <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/40">
             <div className="flex flex-wrap items-center gap-2">
@@ -216,8 +223,13 @@ function OutputCard({ output }) {
                 <div className="mt-3 text-xs font-semibold text-slate-500">Detected: {output.detected_projects.join(', ')}</div>
             )}
             <div className="mt-4 flex flex-wrap gap-2">
-                <Link href={route('tasks.create')} className={secondaryButton}>Review as task</Link>
+                <button type="button" onClick={sendToInbox} className={primaryButton}>
+                    Send to Inbox to review
+                </button>
             </div>
+            <p className="mt-2 text-xs text-slate-500">
+                Keeps your original wording and this proposal, so you never retype it.
+            </p>
         </article>
     );
 }

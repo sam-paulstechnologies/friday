@@ -10,12 +10,25 @@ use App\Models\MiriamDevelopmentJob;
 use App\Models\Task;
 use App\Models\User;
 use App\Models\WaitingItem;
+use App\Models\MiriamReminder;
 use App\Services\DailyReview\DailyReviewService;
 use App\Services\Health\MedicationReminderService;
+use App\Support\OperationalClock;
 use Illuminate\Support\Collection;
 
 class TodayCommandCenterService
 {
+    /**
+     * Services the Codex / development pipeline needs in order to do anything.
+     * They are absent from this build, so the panel reports itself unavailable
+     * rather than implying work can be started from Today.
+     */
+    private const DEVELOPMENT_MODULE_CLASSES = [
+        'App\Services\MiriamRunnerMonitoringService',
+        'App\Services\MiriamPromptQueueService',
+        'App\Services\MiriamAppRegistryService',
+    ];
+
     private const ACTIVE_DEVELOPMENT_STATUSES = [
         'queued',
         'waiting_for_runner',
@@ -74,6 +87,7 @@ class TodayCommandCenterService
     public function __construct(
         private readonly DailyReviewService $dailyReviewService,
         private readonly MedicationReminderService $medicationReminderService,
+        private readonly OperationalClock $clock,
     ) {}
 
     public function forUser(User $user): array
@@ -95,8 +109,56 @@ class TodayCommandCenterService
             'products' => $this->products($user),
             'overdue_blocked' => $blockedItems,
             'later_backlog' => $this->laterBacklog($groups),
+            'reminders' => $this->reminders($user),
             'empty_state' => $this->emptyState($doThisNow, $medication, $jobs),
         ];
+    }
+
+    /**
+     * Reminders that are due now or were recently missed.
+     *
+     * Today and Slack read the same `next_reminder_at` field, so both agree on
+     * whether a reminder is due.
+     */
+    private function reminders(User $user): array
+    {
+        $now = $this->clock->now();
+
+        return MiriamReminder::query()
+            ->with('task:id,title')
+            ->where('user_id', $user->id)
+            ->whereIn('status', ['pending', 'snoozed', 'exhausted'])
+            ->whereNotNull('due_at')
+            ->where('due_at', '<=', $now->addHours(12)->utc())
+            ->orderBy('due_at')
+            ->limit(10)
+            ->get()
+            ->map(function (MiriamReminder $reminder) use ($now): array {
+                $dueLocal = $this->clock->toLocal($reminder->due_at);
+                $isDue = $reminder->due_at !== null && $reminder->due_at->lessThanOrEqualTo($now->utc());
+
+                return [
+                    'id' => $reminder->id,
+                    'title' => $reminder->title,
+                    'status' => $reminder->status,
+                    'state' => $reminder->status === 'exhausted'
+                        ? 'missed'
+                        : ($isDue ? 'due' : 'scheduled'),
+                    'due_at_local' => $dueLocal?->format('M j, g:i A'),
+                    'attempts' => (int) $reminder->reminder_attempts,
+                    'delivery_failed' => ($reminder->metadata['reminder_status'] ?? null) === 'exhausted'
+                        || ($reminder->status === 'exhausted'),
+                    'task' => $reminder->task ? [
+                        'id' => $reminder->task->id,
+                        'title' => $reminder->task->title,
+                    ] : null,
+                    'href' => $reminder->task_id
+                        ? route('tasks.show', $reminder->task_id, false)
+                        : null,
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     private function metrics(Collection $groups, array $medication, Collection $jobs, Collection $failures, array $waitingItems, array $blockedItems): array
@@ -234,7 +296,7 @@ class TodayCommandCenterService
             ->where('status', 'open')
             ->where(function ($query): void {
                 $query->whereNull('follow_up_date')
-                    ->orWhereDate('follow_up_date', '<=', now()->toDateString());
+                    ->orWhereDate('follow_up_date', '<=', $this->clock->todayString());
             })
             ->latest()
             ->limit(6)
@@ -290,10 +352,20 @@ class TodayCommandCenterService
 
     private function codexWorkstream(Collection $jobs): array
     {
+        $available = $this->developmentModuleAvailable();
+
         return [
-            'status_label' => $jobs->isEmpty()
-                ? 'Codex idle'
-                : ($jobs->whereIn('status', self::BLOCKED_DEVELOPMENT_STATUSES)->isNotEmpty() ? 'Codex blocked' : 'Codex active'),
+            // Honest state, not an implied pipeline: when the runner services
+            // are absent nothing can start, whatever rows exist in the table.
+            'available' => $available,
+            'unavailable_reason' => $available
+                ? null
+                : 'The Codex runner is not installed in this build. Nothing can start, stop, or deploy from here.',
+            'status_label' => ! $available
+                ? 'Codex not available'
+                : ($jobs->isEmpty()
+                    ? 'Codex idle'
+                    : ($jobs->whereIn('status', self::BLOCKED_DEVELOPMENT_STATUSES)->isNotEmpty() ? 'Codex blocked' : 'Codex active')),
             'jobs' => $jobs->take(6)->map(fn (MiriamDevelopmentJob $job) => [
                 'id' => $job->id,
                 'title' => $job->title,
@@ -342,7 +414,10 @@ class TodayCommandCenterService
             'next_action' => $next?->title ?? 'No active task',
             'blocker' => $blocked?->title,
             'last_movement' => $matched->max('updated_at')?->diffForHumans() ?? 'No recent movement',
-            'href' => route('tasks.index', ['search' => $bucket['label']], false),
+            // The bucket is matched on project/portfolio/area names, which no
+            // task-title search reproduces. Link to the real task list rather
+            // than to a search that is guaranteed to return nothing.
+            'href' => route('tasks.index', [], false),
         ];
     }
 
@@ -427,10 +502,26 @@ class TodayCommandCenterService
         return [
             'show' => count($doThisNow) === 0,
             'title' => 'No fires right now',
-            'next_action' => 'Review the Today by product cards and choose one high-leverage task.',
+            'next_action' => 'Clear your Inbox, or pick one task from the list and give it the next hour.',
             'codex_status' => $jobs->isEmpty() ? 'Codex idle' : 'Codex has active work.',
             'medication_status' => $medication['status_label'] ?? 'Medication unknown',
         ];
+    }
+
+    /**
+     * The Codex / development pipeline is only real when the services that
+     * drive it are present. They are not in this build, so Today must say so
+     * instead of implying a pipeline that cannot start.
+     */
+    public function developmentModuleAvailable(): bool
+    {
+        foreach (self::DEVELOPMENT_MODULE_CLASSES as $class) {
+            if (! class_exists($class)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function developmentJobs(): Collection
@@ -483,15 +574,17 @@ class TodayCommandCenterService
             return 'critical';
         }
 
-        if ($task->due_date && $task->due_date->toDateString() < now()->toDateString()) {
+        $today = $this->clock->todayString();
+
+        if ($task->due_date && $task->due_date->toDateString() < $today) {
             return 'critical';
         }
 
-        if ($task->due_date?->toDateString() === now()->toDateString() || in_array($task->priority, ['urgent', 'high'], true)) {
+        if ($task->due_date?->toDateString() === $today || in_array($task->priority, ['urgent', 'high'], true)) {
             return 'high';
         }
 
-        if ($task->due_date && $task->due_date->toDateString() <= now()->addDays(7)->toDateString()) {
+        if ($task->due_date && $task->due_date->toDateString() <= $this->clock->dateString(7)) {
             return 'medium';
         }
 
@@ -512,11 +605,11 @@ class TodayCommandCenterService
             return 'This is blocked and needs an unblocker.';
         }
 
-        if ($task->due_date && $task->due_date->toDateString() < now()->toDateString()) {
+        if ($task->due_date && $task->due_date->toDateString() < $this->clock->todayString()) {
             return 'This is overdue.';
         }
 
-        if ($task->due_date?->toDateString() === now()->toDateString()) {
+        if ($task->due_date?->toDateString() === $this->clock->todayString()) {
             return 'This is due today.';
         }
 

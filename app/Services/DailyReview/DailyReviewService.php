@@ -5,16 +5,21 @@ namespace App\Services\DailyReview;
 use App\Models\DailyReview;
 use App\Models\Task;
 use App\Models\User;
+use App\Support\OperationalClock;
 use Illuminate\Support\Collection;
 
 class DailyReviewService
 {
     public const CLOSED_STATUSES = ['completed', 'done', 'archived'];
 
+    public function __construct(private readonly OperationalClock $clock) {}
+
     public function collectTodayTasks(User $user, array $options = []): Collection
     {
-        $today = now()->toDateString();
-        $nextWeek = now()->addDays(7)->toDateString();
+        // Every "today" below is the operator's calendar day, not UTC's.
+        $today = $this->clock->todayString();
+        $yesterday = $this->clock->yesterdayString();
+        $nextWeek = $this->clock->dateString(7);
         $portfolio = strtolower((string) ($options['portfolio'] ?? 'all'));
         $priority = (string) ($options['priority'] ?? 'all');
 
@@ -31,6 +36,9 @@ class DailyReviewService
                 $query->whereIn('priority', ['urgent', 'high']);
             })
             ->whereNotIn('status', self::CLOSED_STATUSES)
+            // Captured-but-untriaged and dismissed work belongs to the Inbox,
+            // not to Today.
+            ->triaged()
             ->orderByRaw('due_date is null')
             ->orderBy('due_date')
             ->orderByRaw("case priority when 'urgent' then 1 when 'high' then 2 when 'medium' then 3 else 4 end")
@@ -39,7 +47,7 @@ class DailyReviewService
 
         return collect([
             'overdue' => $tasks->filter(fn (Task $task) => $task->due_date && $task->due_date->toDateString() < $today && $task->status !== 'blocked' && $task->status !== 'waiting')->values(),
-            'missed_yesterday' => $tasks->filter(fn (Task $task) => $task->due_date?->toDateString() === now()->subDay()->toDateString() && $task->status !== 'blocked' && $task->status !== 'waiting')->values(),
+            'missed_yesterday' => $tasks->filter(fn (Task $task) => $task->due_date?->toDateString() === $yesterday && $task->status !== 'blocked' && $task->status !== 'waiting')->values(),
             'due_today' => $tasks->filter(fn (Task $task) => $task->due_date?->toDateString() === $today && $task->status !== 'blocked' && $task->status !== 'waiting')->values(),
             'scheduled_today' => $tasks->filter(fn (Task $task) => $task->start_date?->toDateString() === $today && $task->due_date?->toDateString() !== $today && $task->status !== 'blocked' && $task->status !== 'waiting')->values(),
             'upcoming' => $tasks->filter(fn (Task $task) => $task->due_date && $task->due_date->toDateString() > $today && $task->due_date->toDateString() <= $nextWeek && $task->status !== 'blocked' && $task->status !== 'waiting')->values(),
@@ -59,7 +67,9 @@ class DailyReviewService
                     ->orWhere('reporter_id', $user->id);
             })
             ->where('status', 'completed')
-            ->whereDate('completed_at', now()->toDateString())
+            // completed_at is a UTC instant; whereDate() against it reported
+            // the previous day for the first four Dubai hours of every day.
+            ->completedOn($this->clock->todayString())
             ->orderByDesc('completed_at')
             ->orderByDesc('updated_at')
             ->get();
@@ -144,7 +154,7 @@ class DailyReviewService
             ->unique(fn (array $item) => $item['task']->id)
             ->values();
 
-        $reviewDate = now()->toDateString();
+        $reviewDate = $this->clock->todayString();
         $review = DailyReview::query()
             ->where('user_id', $user->id)
             ->whereDate('review_date', $reviewDate)

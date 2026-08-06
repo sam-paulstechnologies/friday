@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\MiriamReminder;
 use App\Models\MiriamSlackClarification;
+use App\Models\Task;
 use App\Models\User;
 use App\Services\Calendar\CalendarSyncService;
 use App\Services\Miriam\MiriamBrainService;
@@ -327,28 +328,57 @@ class MiriamReminderService
         $sent = 0;
 
         MiriamReminder::query()
+            ->with(['task.project'])
             ->whereIn('status', ['pending', 'snoozed'])
+            ->whereNotNull('next_reminder_at')
             ->where('next_reminder_at', '<=', $now->utc())
             ->orderBy('next_reminder_at')
             ->get()
             ->each(function (MiriamReminder $reminder) use ($now, &$sent): void {
-                if ($reminder->last_sent_at && $reminder->last_sent_at->greaterThanOrEqualTo($reminder->next_reminder_at)) {
+                $reminder = $reminder->fresh(['task.project']) ?: $reminder;
+
+                if (! $this->reminderCanNotify($reminder)) {
                     return;
                 }
 
-                $result = $this->sendSlack(
-                    $reminder->slack_channel_id,
-                    "Miriam reminder: {$reminder->title}",
-                    $this->dueReminderBlocks($reminder)
-                );
+                $dueForAttempt = $reminder->next_reminder_at;
+
+                if ($reminder->last_sent_at && $dueForAttempt && $reminder->last_sent_at->greaterThanOrEqualTo($dueForAttempt)) {
+                    $this->recordEvent($reminder, 'reminder_deduplicated', 'slack', [
+                        'last_sent_at' => $reminder->last_sent_at?->toIso8601String(),
+                        'next_reminder_at' => $dueForAttempt?->toIso8601String(),
+                    ]);
+
+                    return;
+                }
+
+                if ($reminder->reminder_attempts >= $this->maxPokes()) {
+                    $this->exhaustReminder($reminder, $now, 'max_pokes_already_reached');
+
+                    return;
+                }
 
                 $attempt = $reminder->reminder_attempts + 1;
+                $result = $this->sendSlack(
+                    $reminder->slack_channel_id,
+                    "Reminder: {$reminder->title}",
+                    $this->dueReminderBlocks($reminder, $attempt)
+                );
+
+                $nextReminderAt = $attempt >= $this->maxPokes()
+                    ? null
+                    : $this->nextPokerAt($reminder, $attempt, $now);
 
                 $reminder->forceFill([
-                    'status' => 'pending',
+                    'status' => $attempt >= $this->maxPokes() ? 'exhausted' : 'pending',
                     'reminder_attempts' => $attempt,
                     'last_sent_at' => $now->utc(),
-                    'next_reminder_at' => $now->utc()->addMinutes(15),
+                    'next_reminder_at' => $nextReminderAt,
+                    'metadata' => array_merge($reminder->metadata ?? [], [
+                        'last_poke_attempt' => $attempt,
+                        'last_poke_at' => $now->utc()->toIso8601String(),
+                        'reminder_status' => $attempt >= $this->maxPokes() ? 'exhausted' : 'active',
+                    ]),
                 ])->save();
 
                 $this->recordEvent($reminder, ($result['ok'] ?? false) ? 'slack_reminder_sent' : 'slack_reminder_failed', 'slack', [
@@ -356,10 +386,180 @@ class MiriamReminderService
                     'slack_error' => $result['error'] ?? null,
                 ]);
 
+                if ($attempt >= $this->maxPokes()) {
+                    $this->recordEvent($reminder->fresh() ?: $reminder, 'reminder_escalation_exhausted', 'slack', [
+                        'attempt' => $attempt,
+                        'task_id' => $reminder->task_id,
+                    ]);
+                }
+
                 $sent++;
             });
 
         return $sent;
+    }
+
+    public function syncAfterTaskSaved(Task $task, ?User $user = null, bool $rescheduleFromDueDate = false): void
+    {
+        $reminders = MiriamReminder::query()
+            ->where('task_id', $task->id)
+            ->whereIn('status', ['awaiting_confirmation', 'pending', 'snoozed', 'exhausted'])
+            ->get();
+
+        foreach ($reminders as $reminder) {
+            if ($task->status === 'completed') {
+                if ($reminder->status !== 'done') {
+                    $reminder->forceFill([
+                        'status' => 'done',
+                        'completed_at' => $task->completed_at ?: CarbonImmutable::now('UTC'),
+                        'next_reminder_at' => null,
+                        'metadata' => array_merge($reminder->metadata ?? [], [
+                            'reminder_status' => 'cancelled_by_task_completion',
+                        ]),
+                    ])->save();
+
+                    $this->recordEvent($reminder, 'task_completed_inside_miriam', 'miriam', [
+                        'task_id' => $task->id,
+                        'user_id' => $user?->id,
+                    ]);
+                    $this->recordEvent($reminder, 'future_reminders_cancelled', 'miriam', [
+                        'reason' => 'task_completed',
+                    ]);
+                }
+
+                continue;
+            }
+
+            if ($task->status === 'archived') {
+                if (! in_array($reminder->status, ['cancelled', 'done'], true)) {
+                    $reminder->forceFill([
+                        'status' => 'cancelled',
+                        'cancelled_at' => CarbonImmutable::now('UTC'),
+                        'next_reminder_at' => null,
+                        'metadata' => array_merge($reminder->metadata ?? [], [
+                            'reminder_status' => 'cancelled_by_task_archive',
+                        ]),
+                    ])->save();
+
+                    $this->recordEvent($reminder, 'future_reminders_cancelled', 'miriam', [
+                        'reason' => 'task_archived',
+                    ]);
+                }
+
+                continue;
+            }
+
+            if ($rescheduleFromDueDate && $task->due_date && $reminder->due_at && in_array($reminder->status, ['pending', 'snoozed', 'exhausted'], true)) {
+                $currentLocal = $reminder->due_at->setTimezone($reminder->timezone ?: self::DEFAULT_TIMEZONE);
+                $newDueAt = CarbonImmutable::parse($task->due_date->toDateString().' '.$currentLocal->format('H:i:s'), $reminder->timezone ?: self::DEFAULT_TIMEZONE);
+
+                $reminder->forceFill([
+                    'status' => 'pending',
+                    'due_at' => $newDueAt->utc(),
+                    'next_reminder_at' => $newDueAt->isFuture() ? $newDueAt->utc() : CarbonImmutable::now('UTC'),
+                    'reminder_attempts' => 0,
+                    'last_sent_at' => null,
+                    'metadata' => array_merge($reminder->metadata ?? [], [
+                        'due_date' => $newDueAt->toDateString(),
+                        'due_time' => $newDueAt->format('H:i'),
+                        'reminder_status' => 'rescheduled_from_task',
+                    ]),
+                ])->save();
+
+                $this->recordEvent($reminder, 'reminder_rescheduled', 'miriam', [
+                    'task_id' => $task->id,
+                    'due_at' => $newDueAt->utc()->toIso8601String(),
+                ]);
+            }
+        }
+    }
+
+    private function reminderCanNotify(MiriamReminder $reminder): bool
+    {
+        if (! in_array($reminder->status, ['pending', 'snoozed'], true)) {
+            return false;
+        }
+
+        if (! $reminder->task_id) {
+            return true;
+        }
+
+        $task = $reminder->task;
+
+        if (! $task) {
+            $reminder->forceFill([
+                'status' => 'cancelled',
+                'cancelled_at' => CarbonImmutable::now('UTC'),
+                'next_reminder_at' => null,
+            ])->save();
+
+            $this->recordEvent($reminder, 'future_reminders_cancelled', 'miriam', [
+                'reason' => 'task_missing',
+            ]);
+
+            return false;
+        }
+
+        if ($task->status === 'completed') {
+            $this->syncAfterTaskSaved($task);
+
+            return false;
+        }
+
+        if ($task->status === 'archived') {
+            $this->syncAfterTaskSaved($task);
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private function nextPokerAt(MiriamReminder $reminder, int $attempt, CarbonImmutable $now): CarbonImmutable
+    {
+        $base = $reminder->due_at
+            ? CarbonImmutable::parse($reminder->due_at)->utc()
+            : $now->utc();
+
+        $candidate = match ($attempt) {
+            1 => $base->addMinutes($this->secondPokeMinutes()),
+            2 => $base->addMinutes($this->finalPokeMinutes()),
+            default => $now->utc()->addMinutes($this->secondPokeMinutes()),
+        };
+
+        return $candidate->lte($now->utc()) ? $now->utc()->addMinute() : $candidate;
+    }
+
+    private function exhaustReminder(MiriamReminder $reminder, CarbonImmutable $now, string $reason): void
+    {
+        $reminder->forceFill([
+            'status' => 'exhausted',
+            'next_reminder_at' => null,
+            'metadata' => array_merge($reminder->metadata ?? [], [
+                'reminder_status' => 'exhausted',
+                'exhausted_at' => $now->utc()->toIso8601String(),
+            ]),
+        ])->save();
+
+        $this->recordEvent($reminder, 'reminder_escalation_exhausted', 'slack', [
+            'reason' => $reason,
+            'task_id' => $reminder->task_id,
+        ]);
+    }
+
+    private function secondPokeMinutes(): int
+    {
+        return max(1, (int) config('services.miriam_capture.second_poke_minutes', 30));
+    }
+
+    private function finalPokeMinutes(): int
+    {
+        return max($this->secondPokeMinutes() + 1, (int) config('services.miriam_capture.final_poke_minutes', 120));
+    }
+
+    private function maxPokes(): int
+    {
+        return max(1, (int) config('services.miriam_capture.max_pokes', 3));
     }
 
     public function markDone(MiriamReminder $reminder, string $slackUserId): MiriamReminder
@@ -372,21 +572,57 @@ class MiriamReminderService
             ])->save();
         }
 
+        if ($reminder->task_id && $reminder->task && $reminder->task->status !== 'completed') {
+            $reminder->task->forceFill([
+                'status' => 'completed',
+                'completed_at' => CarbonImmutable::now('UTC'),
+            ])->save();
+
+            $reminder->task->activities()->create([
+                'user_id' => $reminder->user_id,
+                'action' => 'task_completed_from_slack',
+                'description' => 'Completed from Slack reminder.',
+            ]);
+        }
+
         $this->recordEvent($reminder, 'done_clicked', 'slack', ['slack_user_id' => $slackUserId]);
+        $this->recordEvent($reminder, 'future_reminders_cancelled', 'slack', ['reason' => 'done_clicked']);
 
         return $reminder;
     }
 
     public function snooze(MiriamReminder $reminder, string $slackUserId, int $minutes = 15): MiriamReminder
     {
+        $target = CarbonImmutable::now('UTC')->addMinutes($minutes);
+
+        // A redelivered Slack interaction would otherwise snooze the same
+        // occurrence a second time and record a second event. One click, one
+        // next occurrence.
+        if ($reminder->status === 'snoozed'
+            && $reminder->next_reminder_at
+            && $reminder->next_reminder_at->equalTo($target)) {
+            return $reminder;
+        }
+
         if (! in_array($reminder->status, ['done', 'cancelled'], true)) {
+            $nextReminderAt = $target;
+
             $reminder->forceFill([
                 'status' => 'snoozed',
-                'next_reminder_at' => CarbonImmutable::now('UTC')->addMinutes($minutes),
+                'due_at' => $nextReminderAt,
+                'next_reminder_at' => $nextReminderAt,
+                'reminder_attempts' => 0,
+                'last_sent_at' => null,
+                'metadata' => array_merge($reminder->metadata ?? [], [
+                    'reminder_status' => 'snoozed',
+                    'last_snoozed_minutes' => $minutes,
+                    'due_date' => $nextReminderAt->setTimezone($reminder->timezone ?: self::DEFAULT_TIMEZONE)->toDateString(),
+                    'due_time' => $nextReminderAt->setTimezone($reminder->timezone ?: self::DEFAULT_TIMEZONE)->format('H:i'),
+                ]),
             ])->save();
         }
 
-        $this->recordEvent($reminder, 'snooze_clicked', 'slack', [
+        $this->recordEvent($reminder, 'reminder_snoozed', 'slack', [
             'slack_user_id' => $slackUserId,
             'minutes' => $minutes,
         ]);
@@ -405,6 +641,89 @@ class MiriamReminderService
         }
 
         $this->recordEvent($reminder, 'cancel_clicked', 'slack', ['slack_user_id' => $slackUserId]);
+        $this->recordEvent($reminder, 'future_reminders_cancelled', 'slack', ['reason' => 'cancel_clicked']);
+
+        return $reminder;
+    }
+
+    public function rescheduleTonight(MiriamReminder $reminder, string $slackUserId): MiriamReminder
+    {
+        $localNow = CarbonImmutable::now($reminder->timezone ?: self::DEFAULT_TIMEZONE);
+        $target = $localNow->setTime(19, 0);
+
+        if ($target->lte($localNow)) {
+            $target = $target->addDay();
+        }
+
+        return $this->reschedule($reminder, $target, $slackUserId, 'tonight');
+    }
+
+    public function rescheduleTomorrow(MiriamReminder $reminder, string $slackUserId): MiriamReminder
+    {
+        $timezone = $reminder->timezone ?: self::DEFAULT_TIMEZONE;
+        $localDue = $reminder->due_at
+            ? $reminder->due_at->setTimezone($timezone)
+            : CarbonImmutable::now($timezone)->setTime(9, 0);
+
+        $target = CarbonImmutable::now($timezone)
+            ->addDay()
+            ->setTime((int) $localDue->format('H') ?: 9, (int) $localDue->format('i'));
+
+        return $this->reschedule($reminder, $target, $slackUserId, 'tomorrow');
+    }
+
+    public function moveToToday(MiriamReminder $reminder, string $slackUserId): MiriamReminder
+    {
+        if ($reminder->task_id && $reminder->task) {
+            $today = CarbonImmutable::now($reminder->timezone ?: self::DEFAULT_TIMEZONE)->toDateString();
+
+            if ($reminder->task->start_date?->toDateString() !== $today) {
+                $reminder->task->forceFill(['start_date' => $today])->save();
+                $reminder->task->activities()->create([
+                    'user_id' => $reminder->user_id,
+                    'action' => 'task_moved_to_today',
+                    'description' => 'Moved to Today from Slack reminder.',
+                ]);
+            }
+        }
+
+        $this->recordEvent($reminder, 'task_moved_to_today', 'slack', ['slack_user_id' => $slackUserId]);
+
+        return $reminder;
+    }
+
+    private function reschedule(MiriamReminder $reminder, CarbonImmutable $target, string $slackUserId, string $label): MiriamReminder
+    {
+        if (! in_array($reminder->status, ['done', 'cancelled'], true)) {
+            $reminder->forceFill([
+                'status' => 'pending',
+                'due_at' => $target->utc(),
+                'next_reminder_at' => $target->utc(),
+                'reminder_attempts' => 0,
+                'last_sent_at' => null,
+                'metadata' => array_merge($reminder->metadata ?? [], [
+                    'reminder_status' => 'rescheduled',
+                    'due_date' => $target->toDateString(),
+                    'due_time' => $target->format('H:i'),
+                    'reschedule_label' => $label,
+                ]),
+            ])->save();
+
+            if ($reminder->task_id && $reminder->task) {
+                $reminder->task->forceFill(['due_date' => $target->toDateString()])->save();
+                $reminder->task->activities()->create([
+                    'user_id' => $reminder->user_id,
+                    'action' => 'reminder_rescheduled_from_slack',
+                    'description' => "Reminder rescheduled to {$target->format('M j, g:i A')}.",
+                ]);
+            }
+        }
+
+        $this->recordEvent($reminder, 'reminder_rescheduled', 'slack', [
+            'slack_user_id' => $slackUserId,
+            'label' => $label,
+            'due_at' => $target->utc()->toIso8601String(),
+        ]);
 
         return $reminder;
     }
@@ -414,6 +733,10 @@ class MiriamReminderService
         $message = match ($action) {
             'miriam_reminder_done' => $this->handleDoneAction($reminder, $slackUserId),
             'miriam_reminder_snooze_15' => $this->handleSnoozeAction($reminder, $slackUserId),
+            'miriam_reminder_snooze_60' => $this->handleSnoozeAction($reminder, $slackUserId, 60),
+            'miriam_reminder_tonight' => $this->handleTonightAction($reminder, $slackUserId),
+            'miriam_reminder_tomorrow' => $this->handleTomorrowAction($reminder, $slackUserId),
+            'miriam_reminder_move_today' => $this->handleMoveToTodayAction($reminder, $slackUserId),
             'miriam_reminder_cancel' => $this->handleCancelAction($reminder, $slackUserId),
             default => 'Unknown Miriam reminder action.',
         };
@@ -508,15 +831,48 @@ class MiriamReminderService
         return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
     }
 
-    private function handleSnoozeAction(MiriamReminder $reminder, string $slackUserId): string
+    private function handleSnoozeAction(MiriamReminder $reminder, string $slackUserId, int $minutes = 15): string
     {
         if (in_array($reminder->status, ['done', 'cancelled'], true)) {
             return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
         }
 
-        $this->snooze($reminder, $slackUserId, 15);
+        $this->snooze($reminder, $slackUserId, $minutes);
 
         return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+    }
+
+    private function handleTonightAction(MiriamReminder $reminder, string $slackUserId): string
+    {
+        if (in_array($reminder->status, ['done', 'cancelled'], true)) {
+            return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+        }
+
+        $this->rescheduleTonight($reminder, $slackUserId);
+
+        return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+    }
+
+    private function handleTomorrowAction(MiriamReminder $reminder, string $slackUserId): string
+    {
+        if (in_array($reminder->status, ['done', 'cancelled'], true)) {
+            return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+        }
+
+        $this->rescheduleTomorrow($reminder, $slackUserId);
+
+        return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+    }
+
+    private function handleMoveToTodayAction(MiriamReminder $reminder, string $slackUserId): string
+    {
+        if (in_array($reminder->status, ['done', 'cancelled'], true)) {
+            return $this->actionStatusMessage($reminder->fresh() ?: $reminder);
+        }
+
+        $this->moveToToday($reminder, $slackUserId);
+
+        return 'Moved to Today - '.$reminder->title;
     }
 
     private function handleCancelAction(MiriamReminder $reminder, string $slackUserId): string
@@ -535,10 +891,11 @@ class MiriamReminderService
     private function actionStatusMessage(MiriamReminder $reminder): string
     {
         return match ($reminder->status) {
-            'done' => "✅ Done — {$reminder->title}",
-            'cancelled' => "🛑 Cancelled — {$reminder->title}",
-            'snoozed' => '⏰ Snoozed until '.$reminder->next_reminder_at?->setTimezone($reminder->timezone)->format('g:i A')." — {$reminder->title}",
-            default => "Miriam reminder: {$reminder->title}",
+            'done' => "Done - {$reminder->title}",
+            'cancelled' => "Cancelled - {$reminder->title}",
+            'snoozed' => 'Snoozed until '.$reminder->next_reminder_at?->setTimezone($reminder->timezone ?: self::DEFAULT_TIMEZONE)->format('g:i A')." - {$reminder->title}",
+            'exhausted' => "Reminder exhausted - {$reminder->title}",
+            default => "Reminder: {$reminder->title}",
         };
     }
 
@@ -630,14 +987,28 @@ class MiriamReminderService
         };
     }
 
-    private function dueReminderBlocks(MiriamReminder $reminder): array
+    private function dueReminderBlocks(MiriamReminder $reminder, int $attempt = 1): array
     {
-        return [
+        $reminder->loadMissing('task.project');
+        $project = $reminder->task?->project?->name ?: ($reminder->metadata['project_name'] ?? null);
+        $due = $reminder->due_at
+            ? $reminder->due_at->setTimezone($reminder->timezone ?: self::DEFAULT_TIMEZONE)->format('M j, g:i A')
+            : 'No due time';
+        $maxPokes = $this->maxPokes();
+        $taskUrl = $reminder->task_id ? route('tasks.show', $reminder->task_id, true) : null;
+
+        $blocks = [
             [
                 'type' => 'section',
                 'text' => [
                     'type' => 'mrkdwn',
-                    'text' => "Miriam reminder: {$reminder->title}",
+                    'text' => implode("\n", array_filter([
+                        "*Reminder: {$reminder->title}*",
+                        $project ? "Project: {$project}" : null,
+                        "Due: {$due}",
+                        'Status: Open',
+                        "Poke {$attempt} of {$maxPokes}",
+                    ])),
                 ],
             ],
             [
@@ -658,6 +1029,16 @@ class MiriamReminderService
                     ],
                     [
                         'type' => 'button',
+                        'text' => ['type' => 'plain_text', 'text' => 'Snooze 1 hour'],
+                        'action_id' => 'miriam_reminder_snooze_60',
+                        'value' => (string) $reminder->id,
+                    ],
+                    // Cancel disappeared from this card during the escalation
+                    // refactor even though the handler stayed. Without it there
+                    // was no way to stop a reminder you no longer needed
+                    // without marking work you had not done as done.
+                    [
+                        'type' => 'button',
                         'style' => 'danger',
                         'text' => ['type' => 'plain_text', 'text' => 'Cancel'],
                         'action_id' => 'miriam_reminder_cancel',
@@ -665,7 +1046,38 @@ class MiriamReminderService
                     ],
                 ],
             ],
+            [
+                'type' => 'actions',
+                'elements' => array_values(array_filter([
+                    [
+                        'type' => 'button',
+                        'text' => ['type' => 'plain_text', 'text' => 'Tonight'],
+                        'action_id' => 'miriam_reminder_tonight',
+                        'value' => (string) $reminder->id,
+                    ],
+                    [
+                        'type' => 'button',
+                        'text' => ['type' => 'plain_text', 'text' => 'Tomorrow'],
+                        'action_id' => 'miriam_reminder_tomorrow',
+                        'value' => (string) $reminder->id,
+                    ],
+                    [
+                        'type' => 'button',
+                        'text' => ['type' => 'plain_text', 'text' => 'Move to Today'],
+                        'action_id' => 'miriam_reminder_move_today',
+                        'value' => (string) $reminder->id,
+                    ],
+                    $taskUrl ? [
+                        'type' => 'button',
+                        'text' => ['type' => 'plain_text', 'text' => 'Open task'],
+                        'url' => $taskUrl,
+                        'value' => (string) $reminder->id,
+                    ] : null,
+                ])),
+            ],
         ];
+
+        return $blocks;
     }
 
     private function sendSlack(?string $channel, string $text, array $blocks = []): array
@@ -698,8 +1110,9 @@ class MiriamReminderService
 
     private function miriamChannel(?string $fallback = null): ?string
     {
+        // config() only — env() at runtime returns null under config:cache,
+        // which silently redirected reminders to the fallback channel.
         return config('services.slack.miriam_channel_id')
-            ?: env('SLACK_MIRIAM_CHANNEL_ID')
             ?: $fallback
             ?: config('services.slack.default_channel');
     }

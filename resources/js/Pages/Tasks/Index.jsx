@@ -1,140 +1,211 @@
-import { Badge, DueDate, EmptyState, FilterBar, PriorityDot, inputClass, primaryButton, statusTone } from '@/Components/Ui';
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, Link, router } from '@inertiajs/react';
-import { useEffect, useState } from 'react';
-import { priorityLabels, statusLabels } from './Partials/TaskForm';
+import { Head, router } from '@inertiajs/react';
+import { useState } from 'react';
+import AppShell from '@/Layouts/AppShell';
+import TaskDetailDrawer from '@/Components/Tasks/TaskDetailDrawer';
+import TaskRow from '@/Components/Tasks/TaskRow';
+import { useTaskCompletion } from '@/Components/Tasks/TaskList';
+import {
+    Button,
+    EmptyState,
+    FilterBar,
+    Icon,
+    LinkButton,
+    Panel,
+    SelectField,
+    TextField,
+    ViewTabs,
+    cx,
+} from '@/Components/Kit';
 
-export default function Index({ tasks, taskGroups = null, taskCounts = null, defaultTab = 'upcoming', filters, statuses, priorities, projects }) {
-    const [values, setValues] = useState(filters);
-    const [tab, setTab] = useState(defaultTab);
-    const groups = taskGroups ?? { upcoming: [], overdue: [], completed: [], all: tasks };
-    const counts = taskCounts ?? {
-        upcoming: groups.upcoming?.length ?? 0,
-        overdue: groups.overdue?.length ?? 0,
-        completed: groups.completed?.length ?? 0,
-        all: groups.all?.length ?? 0,
-    };
-
-    useEffect(() => {
-        const timeout = setTimeout(() => {
-            router.get(route('tasks.index'), values, { preserveState: true, replace: true });
-        }, 250);
-        return () => clearTimeout(timeout);
-    }, [values]);
-
-    const visibleTasks = groups[tab] ?? tasks;
+function Pagination({ links, meta }) {
+    if (!links || links.length <= 3) return null;
 
     return (
-        <AuthenticatedLayout title="Tasks" subtitle="A compact command list for assigned and reported work.">
-            <Head title="My Tasks" />
-
-            <div data-testid="tasks-page" className="space-y-4">
-                <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="flex flex-wrap gap-1">
-                        {[
-                            ['upcoming', 'Upcoming'],
-                            ['overdue', 'Overdue'],
-                            ['completed', 'Completed'],
-                            ['all', 'All'],
-                        ].map(([key, label]) => (
-                            <button key={key} type="button" onClick={() => setTab(key)} className={`rounded-md px-3 py-2 text-sm font-semibold ${tab === key ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'}`}>
-                                {label} <span className="ml-1 text-xs opacity-70">{counts[key] ?? 0}</span>
-                            </button>
-                        ))}
-                    </div>
-                    <Link href={route('tasks.create')} className={primaryButton}>+ Add task</Link>
-                </div>
-
-                <FilterBar>
-                    <div className="grid gap-2 md:grid-cols-4">
-                        <input type="search" value={values.search} onChange={(event) => setValues({ ...values, search: event.target.value })} placeholder="Search tasks" className={inputClass} />
-                        <select value={values.status} onChange={(event) => setValues({ ...values, status: event.target.value })} className={inputClass}>
-                            <option value="">All statuses</option>
-                            {statuses.map((status) => <option key={status} value={status}>{statusLabels[status]}</option>)}
-                        </select>
-                        <select value={values.priority} onChange={(event) => setValues({ ...values, priority: event.target.value })} className={inputClass}>
-                            <option value="">All priorities</option>
-                            {priorities.map((priority) => <option key={priority} value={priority}>{priorityLabels[priority]}</option>)}
-                        </select>
-                        <select value={values.project_id} onChange={(event) => setValues({ ...values, project_id: event.target.value })} className={inputClass}>
-                            <option value="">All projects</option>
-                            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-                        </select>
-                    </div>
-                </FilterBar>
-
-                <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-                    <div className="grid hidden gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500 lg:grid-cols-[minmax(0,1fr)_130px_130px_150px_120px_100px]">
-                        <div>Task</div>
-                        <div>Status</div>
-                        <div>Priority</div>
-                        <div>Assignee</div>
-                        <div>Due</div>
-                        <div></div>
-                    </div>
-                    {visibleTasks.length === 0 ? (
-                        <EmptyState title="No tasks found" description="Create a task or adjust filters to see work here." />
-                    ) : (
-                        <>
-                            <Link href={route('tasks.create')} className="flex items-center gap-3 border-b border-slate-100 px-4 py-2.5 text-sm text-slate-500 hover:bg-slate-50">
-                                <span className="flex h-4 w-4 items-center justify-center rounded-full border border-dashed border-slate-300 text-xs">+</span>
-                                Add task
-                            </Link>
-                            {visibleTasks.map((task) => <TaskListRow key={task.id} task={task} />)}
-                        </>
-                    )}
-                </div>
-            </div>
-        </AuthenticatedLayout>
+        <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3 sm:px-5">
+            <p className="text-xs text-ink-subtle">
+                Showing {meta.from ?? 0}–{meta.to ?? 0} of {meta.total} tasks
+            </p>
+            <ul className="flex flex-wrap items-center gap-1">
+                {links.map((link, index) => (
+                    <li key={`${link.label}-${index}`}>
+                        <button
+                            type="button"
+                            disabled={!link.url}
+                            aria-current={link.active ? 'page' : undefined}
+                            onClick={() => link.url && router.visit(link.url, { preserveScroll: true, preserveState: true })}
+                            className={cx(
+                                'min-w-8 rounded-control px-2 py-1 text-xs font-semibold',
+                                link.active ? 'bg-brand-600 text-ink-inverse' : 'text-ink-muted hover:bg-surface-sunken',
+                                !link.url && 'cursor-not-allowed opacity-40',
+                            )}
+                            dangerouslySetInnerHTML={{ __html: link.label }}
+                        />
+                    </li>
+                ))}
+            </ul>
+        </nav>
     );
 }
 
-function TaskListRow({ task }) {
-    const completed = task.status === 'completed';
-    const openTask = () => router.visit(route('tasks.show', task.id));
-    const openTaskFromKeyboard = (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            openTask();
-        }
-    };
-    const complete = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (completed) return;
+/**
+ * My Tasks — the canonical place to manage work.
+ *
+ * One server-paginated view at a time. Filters and the selected view live in
+ * the URL, so a view is shareable and the back button behaves.
+ */
+export default function TasksIndex({ tasks, view, views, viewCounts, filters, statuses, priorities, projects, workflowStates }) {
+    const [values, setValues] = useState(filters);
+    const [openTaskId, setOpenTaskId] = useState(null);
+    const toggleCompletion = useTaskCompletion();
 
-        router.patch(route('tasks.status', task.id), { status: 'completed' }, {
-            preserveScroll: true,
-            preserveState: false,
-        });
+    const rows = tasks?.data ?? [];
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Filters apply on submit, not on every keystroke: no mount-time refetch
+    // and no duplicate request per character.
+    const applyFilters = (next = values) => {
+        router.get(route('tasks.index'), { ...next, view }, { preserveState: true, preserveScroll: true, replace: true });
     };
+
+    const changeFilter = (key, value) => {
+        const next = { ...values, [key]: value };
+        setValues(next);
+        applyFilters(next);
+    };
+
+    const tabs = Object.entries(views ?? {}).map(([key, label]) => ({
+        key,
+        label,
+        count: viewCounts?.[key] ?? 0,
+        href: route('tasks.index', { ...values, view: key }),
+    }));
 
     return (
-        <div role="link" tabIndex="0" onClick={openTask} onKeyDown={openTaskFromKeyboard} className={`group grid cursor-pointer gap-3 border-b border-slate-100 px-4 py-2.5 text-sm last:border-b-0 hover:bg-slate-50 lg:grid-cols-[minmax(0,1fr)_130px_130px_150px_120px_100px] lg:items-center ${completed ? 'bg-slate-50/70' : ''}`}>
-            <div className="flex min-w-0 items-center gap-3">
-                <button type="button" onClick={complete} disabled={completed} aria-label={completed ? 'Task completed' : 'Mark task complete'} className={`h-4 w-4 shrink-0 rounded-full border ${completed ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300 bg-white group-hover:border-emerald-500'}`} />
-                <div className="min-w-0">
-                    <div className={`truncate font-medium text-slate-950 ${completed ? 'text-slate-500 line-through decoration-slate-300' : ''}`}>{task.title}</div>
-                    <div className="mt-0.5 truncate text-xs text-slate-500">
-                        {task.project?.name ?? task.section ?? 'No project'}{task.portfolio?.name ? ` / ${task.portfolio.name}` : ''}{task.area?.name ? ` / ${task.area.name}` : ''}
-                    </div>
-                    {task.labels?.length > 0 && (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                            {task.labels.map((label) => (
-                                <span key={label.id} className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600">
-                                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: label.color ?? '#475569' }} />
-                                    {label.name}
-                                </span>
+        <AppShell
+            title="My Tasks"
+            subtitle="Everything assigned to you or reported by you."
+            actions={
+                <LinkButton href={route('tasks.create')} variant="primary">
+                    <Icon name="plus" className="h-4 w-4" />
+                    Add task
+                </LinkButton>
+            }
+            tabs={<ViewTabs items={tabs} current={view} />}
+        >
+            <Head title="My Tasks" />
+
+            <div data-testid="tasks-page">
+                <Panel className="overflow-hidden">
+                    <FilterBar>
+                        <form
+                            onSubmit={(event) => {
+                                event.preventDefault();
+                                applyFilters();
+                            }}
+                            className="relative min-w-0 flex-1 sm:max-w-xs"
+                            role="search"
+                        >
+                            <label htmlFor="task-search" className="sr-only">
+                                Search tasks
+                            </label>
+                            <Icon name="search" className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />
+                            <TextField
+                                id="task-search"
+                                type="search"
+                                value={values.search ?? ''}
+                                onChange={(event) => setValues({ ...values, search: event.target.value })}
+                                placeholder="Search tasks"
+                                className="pl-8"
+                            />
+                        </form>
+
+                        <label htmlFor="filter-status" className="sr-only">
+                            Filter by status
+                        </label>
+                        <SelectField id="filter-status" value={values.status ?? ''} onChange={(event) => changeFilter('status', event.target.value)} className="w-auto">
+                            <option value="">All statuses</option>
+                            {statuses.map((status) => (
+                                <option key={status} value={status}>
+                                    {status.replaceAll('_', ' ')}
+                                </option>
                             ))}
-                        </div>
+                        </SelectField>
+
+                        <label htmlFor="filter-priority" className="sr-only">
+                            Filter by priority
+                        </label>
+                        <SelectField id="filter-priority" value={values.priority ?? ''} onChange={(event) => changeFilter('priority', event.target.value)} className="w-auto">
+                            <option value="">All priorities</option>
+                            {priorities.map((priority) => (
+                                <option key={priority} value={priority}>
+                                    {priority}
+                                </option>
+                            ))}
+                        </SelectField>
+
+                        <label htmlFor="filter-bucket" className="sr-only">
+                            Filter by bucket
+                        </label>
+                        <SelectField id="filter-bucket" value={values.workflow_state ?? ''} onChange={(event) => changeFilter('workflow_state', event.target.value)} className="w-auto">
+                            <option value="">Any bucket</option>
+                            {(workflowStates ?? []).map((state) => (
+                                <option key={state.value} value={state.value}>
+                                    {state.label}
+                                </option>
+                            ))}
+                        </SelectField>
+
+                        <label htmlFor="filter-project" className="sr-only">
+                            Filter by project
+                        </label>
+                        <SelectField id="filter-project" value={values.project_id ?? ''} onChange={(event) => changeFilter('project_id', event.target.value)} className="w-auto">
+                            <option value="">All projects</option>
+                            {projects.map((project) => (
+                                <option key={project.id} value={project.id}>
+                                    {project.name}
+                                </option>
+                            ))}
+                        </SelectField>
+
+                        {(values.search || values.status || values.priority || values.project_id || values.workflow_state) && (
+                            <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                    const cleared = { search: '', status: '', priority: '', project_id: '', workflow_state: '' };
+                                    setValues(cleared);
+                                    applyFilters(cleared);
+                                }}
+                            >
+                                Clear
+                            </Button>
+                        )}
+                    </FilterBar>
+
+                    {rows.length === 0 ? (
+                        <EmptyState
+                            icon="check"
+                            title="Nothing in this view"
+                            description="No task matches this view and these filters. Try another view, clear the filters, or add a task."
+                            action={
+                                <LinkButton href={route('tasks.create')} size="sm" variant="primary">
+                                    Add task
+                                </LinkButton>
+                            }
+                        />
+                    ) : (
+                        <ul className="divide-y divide-line">
+                            {rows.map((task) => (
+                                <TaskRow key={task.id} task={task} today={today} onOpen={(item) => setOpenTaskId(item.id)} onToggle={toggleCompletion} />
+                            ))}
+                        </ul>
                     )}
-                </div>
+
+                    <Pagination links={tasks?.links} meta={{ from: tasks?.from, to: tasks?.to, total: tasks?.total }} />
+                </Panel>
             </div>
-            <Badge tone={statusTone[task.status]}>{statusLabels[task.status]}</Badge>
-            <span className="inline-flex items-center gap-2 text-xs font-medium text-slate-600"><PriorityDot priority={task.priority} />{priorityLabels[task.priority]}</span>
-            <span className="truncate text-xs font-medium text-slate-600">{task.assignee?.name ?? 'Unassigned'}</span>
-            <DueDate date={task.due_date} status={task.status} />
-            <span className="text-xs font-semibold text-slate-400 opacity-0 group-hover:opacity-100">Open</span>
-        </div>
+
+            <TaskDetailDrawer taskId={openTaskId} open={openTaskId !== null} onClose={() => setOpenTaskId(null)} today={today} />
+        </AppShell>
     );
 }

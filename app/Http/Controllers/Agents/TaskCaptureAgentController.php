@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Agents;
 
 use App\Http\Controllers\Controller;
+use App\Models\AgentOutput;
 use App\Models\AgentRun;
 use App\Models\AgentRunLog;
-use App\Models\AgentOutput;
 use App\Services\Agents\TaskCaptureAgent;
+use App\Services\Inbox\CaptureFailedException;
+use App\Services\Inbox\WebCaptureService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -67,6 +69,48 @@ class TaskCaptureAgentController extends Controller
             ->with($run->status === AgentRun::STATUS_COMPLETED ? 'success' : 'error', $run->status === AgentRun::STATUS_COMPLETED
                 ? 'Task Capture Agent completed.'
                 : 'Task Capture Agent failed. Review the run logs.');
+    }
+
+    /**
+     * Send a parsed proposal into the shared capture pipeline.
+     *
+     * This replaces the old "Review as task" link, which opened an empty task
+     * form and threw away everything the agent had just parsed. The proposal
+     * becomes an Inbox capture that carries the original wording, so the
+     * operator reviews and corrects it in the same place as every other
+     * capture rather than retyping it.
+     */
+    public function capture(Request $request, AgentOutput $output, WebCaptureService $capture): RedirectResponse
+    {
+        $run = $output->run;
+
+        // The proposal belongs to a run; the run belongs to a user.
+        abort_unless($run && $run->user_id === $request->user()->id, 403);
+
+        $originalText = trim((string) ($run->original_input ?: $output->generated_task_title));
+
+        if ($originalText === '') {
+            return back()->with('error', 'That proposal has no original text to capture.');
+        }
+
+        try {
+            $result = $capture->capture(
+                $request->user(),
+                $originalText,
+                WebCaptureService::DESTINATION_INBOX,
+                // Stable per-output token: converting the same proposal twice
+                // resolves to the same capture instead of a second one.
+                clientToken: 'agent-output-'.$output->id,
+            );
+        } catch (CaptureFailedException $exception) {
+            return back()->with('error', $exception->getMessage());
+        }
+
+        return redirect()
+            ->route('inbox.show', ['task', $result['task']->id])
+            ->with('success', $result['created']
+                ? 'Sent to your Inbox with the original wording and the agent’s proposal.'
+                : 'That proposal is already in your Inbox.');
     }
 
     private function runResource(AgentRun $run): array

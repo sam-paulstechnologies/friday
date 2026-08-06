@@ -205,18 +205,28 @@ class TaskTest extends TestCase
             'due_date' => now()->toDateString(),
         ]);
 
+        // My Tasks is one server-paginated view at a time; each view is
+        // requested explicitly rather than all four being shipped at once.
         $this->actingAs($user)
-            ->get(route('tasks.index'))
+            ->get(route('tasks.index', ['view' => 'upcoming']))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
                 ->component('Tasks/Index')
-                ->where('taskGroups.upcoming.0.id', $upcoming->id)
-                ->where('taskGroups.overdue.0.id', $overdue->id)
-                ->where('taskGroups.completed.0.id', $completed->id)
-                ->where('taskCounts.upcoming', 1)
-                ->where('taskCounts.overdue', 1)
-                ->where('taskCounts.completed', 1)
+                ->where('tasks.data.0.id', $upcoming->id)
+                ->where('viewCounts.upcoming', 1)
+                ->where('viewCounts.overdue', 1)
+                ->where('viewCounts.completed', 1)
             );
+
+        $this->actingAs($user)
+            ->get(route('tasks.index', ['view' => 'overdue']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->where('tasks.data.0.id', $overdue->id));
+
+        $this->actingAs($user)
+            ->get(route('tasks.index', ['view' => 'completed']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->where('tasks.data.0.id', $completed->id));
     }
 
     public function test_task_index_all_tab_sorts_active_before_completed_and_hides_archived(): void
@@ -247,23 +257,32 @@ class TaskTest extends TestCase
             'status' => 'archived',
         ]);
 
+        // "All active" holds only open work; completed has its own view, and
+        // archived stays out of both.
         $this->actingAs($user)
-            ->get(route('tasks.index'))
+            ->get(route('tasks.index', ['view' => 'all']))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
-                ->where('taskGroups.all.0.id', $activeSoon->id)
-                ->where('taskGroups.all.1.id', $activeLaterUrgent->id)
-                ->where('taskGroups.all.2.id', $completedNew->id)
-                ->where('taskGroups.all.3.id', $completedOld->id)
-                ->where('taskCounts.all', 4)
+                ->where('tasks.data.0.id', $activeSoon->id)
+                ->where('tasks.data.1.id', $activeLaterUrgent->id)
+                ->where('viewCounts.all', 2)
             );
 
         $this->actingAs($user)
-            ->get(route('tasks.index', ['status' => 'archived']))
+            ->get(route('tasks.index', ['view' => 'completed']))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
-                ->where('taskGroups.all.0.id', $archived->id)
-                ->where('taskCounts.all', 1)
+                ->where('tasks.data.0.id', $completedNew->id)
+                ->where('tasks.data.1.id', $completedOld->id)
+                ->where('viewCounts.completed', 2)
+            );
+
+        $this->actingAs($user)
+            ->get(route('tasks.index', ['view' => 'archived']))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('tasks.data.0.id', $archived->id)
+                ->where('viewCounts.archived', 1)
             );
     }
 
@@ -818,7 +837,7 @@ class TaskTest extends TestCase
         $this->actingAs($user)
             ->get(route('tasks.index'))
             ->assertOk()
-            ->assertInertia(fn ($page) => $page->where('taskCounts.all', 0));
+            ->assertInertia(fn ($page) => $page->where('viewCounts.all', 0));
 
         $this->actingAs($user)->patch(route('tasks.restore', $task))->assertRedirect(route('tasks.show', $task));
         $this->assertSame('todo', $task->refresh()->status);

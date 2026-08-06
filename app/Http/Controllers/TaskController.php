@@ -2,8 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
-use App\Models\AuditLog;
 use App\Models\Area;
 use App\Models\CustomField;
 use App\Models\CustomFieldValue;
@@ -15,7 +13,12 @@ use App\Models\User;
 use App\Models\Workspace;
 use App\Notifications\TaskFlowNotification;
 use App\Services\Collaboration\TaskCollaborationService;
+use App\Services\MiriamReminderService;
+use App\Services\Tasks\InvalidTaskTransitionException;
 use App\Services\Tasks\RecurringTaskService;
+use App\Services\Tasks\TaskTransitionService;
+use App\Support\OperationalClock;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
@@ -24,76 +27,179 @@ use Inertia\Response;
 
 class TaskController extends Controller
 {
+    private const PER_PAGE = 50;
+
+    /**
+     * My Tasks.
+     *
+     * One server-paginated view at a time, selected by `view`. Sections come
+     * from the canonical workflow state rather than ad-hoc client filtering,
+     * and captures still sitting in the Inbox are excluded - they are not work
+     * the operator has agreed to yet.
+     */
     public function index(Request $request): Response
     {
-        $filters = $request->only(['search', 'status', 'priority', 'project_id']);
+        $filters = $request->only(['search', 'status', 'priority', 'project_id', 'workflow_state']);
+        $view = $this->resolveView($request->string('view')->toString());
+        $today = app(OperationalClock::class)->todayString();
         $workspaceIds = $request->user()->accessibleWorkspaceIds();
-        $baseQuery = $this->filteredTaskQuery($request, $filters);
 
-        $upcoming = (clone $baseQuery)
-            ->whereNotIn('status', ['completed', 'archived'])
-            ->where(function ($query): void {
-                $query->whereDate('due_date', '>=', now()->toDateString())
-                    ->orWhereNull('due_date');
-            })
-            ->tap(fn ($query) => $this->orderActiveTasks($query))
-            ->get();
+        $query = $this->filteredTaskQuery($request, $filters);
+        $this->applyView($query, $view, $today);
 
-        $overdue = (clone $baseQuery)
-            ->whereNotIn('status', ['completed', 'archived'])
-            ->whereDate('due_date', '<', now()->toDateString())
-            ->orderBy('due_date')
-            ->tap(fn ($query) => $this->orderByPriority($query))
-            ->orderByDesc('updated_at')
-            ->get();
+        if (in_array($view, ['completed', 'archived'], true)) {
+            $this->orderCompletedTasks($query);
+        } else {
+            $this->orderActiveTasks($query);
+        }
 
-        $completed = (clone $baseQuery)
-            ->where('status', 'completed')
-            ->tap(fn ($query) => $this->orderCompletedTasks($query))
-            ->get();
-
-        $active = (clone $baseQuery)
-            ->whereNotIn('status', ['completed', 'archived'])
-            ->tap(fn ($query) => $this->orderActiveTasks($query))
-            ->get();
-
-        $all = ($filters['status'] ?? null) === 'archived'
-            ? (clone $baseQuery)->orderByDesc('updated_at')->get()
-            : $active->merge($completed)->values();
-
-        $taskGroups = [
-            'upcoming' => $upcoming->map(fn (Task $task) => $this->taskResource($task))->values(),
-            'overdue' => $overdue->map(fn (Task $task) => $this->taskResource($task))->values(),
-            'completed' => $completed->map(fn (Task $task) => $this->taskResource($task))->values(),
-            'all' => $all->map(fn (Task $task) => $this->taskResource($task))->values(),
-        ];
+        $tasks = $query
+            ->paginate(self::PER_PAGE)
+            ->withQueryString()
+            ->through(fn (Task $task) => $this->taskResource($task));
 
         return Inertia::render('Tasks/Index', [
-            'tasks' => $taskGroups['all'],
-            'taskGroups' => $taskGroups,
-            'taskCounts' => collect($taskGroups)->map->count(),
-            'defaultTab' => 'upcoming',
+            'tasks' => $tasks,
+            'view' => $view,
+            'views' => $this->viewDefinitions(),
+            'viewCounts' => $this->viewCounts($request, $filters, $today),
             'filters' => [
                 'search' => $filters['search'] ?? '',
                 'status' => $filters['status'] ?? '',
                 'priority' => $filters['priority'] ?? '',
                 'project_id' => $filters['project_id'] ?? '',
+                'workflow_state' => $filters['workflow_state'] ?? '',
             ],
             'statuses' => Task::STATUSES,
             'priorities' => Task::PRIORITIES,
+            'workflowStates' => $this->workflowOptions(),
             'projects' => $this->accessibleProjects($workspaceIds)->select(['id', 'name'])->orderBy('name')->get(),
         ]);
     }
 
-    private function filteredTaskQuery(Request $request, array $filters)
+    /** JSON for the task detail drawer. Same authorization as the full page. */
+    public function panel(Task $task): JsonResponse
+    {
+        Gate::authorize('view', $task);
+
+        $task->load([
+            'workspace:id,name',
+            'project:id,name',
+            'area:id,name',
+            'portfolio:id,name',
+            'parentTask:id,title',
+            'labels:id,name,color',
+            'subtasks' => fn ($query) => $query->with('assignee:id,name')->orderBy('position')->oldest(),
+            'assignee:id,name',
+            'reporter:id,name',
+            'comments' => fn ($query) => $query->with('user:id,name')->latest()->limit(20),
+            'activities' => fn ($query) => $query->with('user:id,name')->latest()->limit(20),
+            'attachments' => fn ($query) => $query->with('user:id,name')->latest(),
+        ]);
+
+        return response()->json([
+            'task' => $this->taskResource($task),
+            'can' => [
+                'update' => Gate::allows('update', $task),
+                'delete' => Gate::allows('delete', $task),
+            ],
+            'transitions' => app(TaskTransitionService::class)->availableFor($task),
+        ]);
+    }
+
+    /** @return array<string, string> */
+    private function viewDefinitions(): array
+    {
+        return [
+            'today' => 'Today',
+            'this_week' => 'This week',
+            'upcoming' => 'Upcoming',
+            'overdue' => 'Overdue',
+            'waiting' => 'Waiting',
+            'delegated' => 'Delegated',
+            'later' => 'Later',
+            'completed' => 'Completed',
+            'all' => 'All active',
+            'archived' => 'Archived',
+        ];
+    }
+
+    private function resolveView(?string $view): string
+    {
+        return array_key_exists((string) $view, $this->viewDefinitions()) ? (string) $view : 'today';
+    }
+
+    private function applyView($query, string $view, string $today): void
+    {
+        if ($view === 'completed') {
+            $query->where('status', 'completed');
+
+            return;
+        }
+
+        if ($view === 'archived') {
+            $query->where('status', 'archived');
+
+            return;
+        }
+
+        // Everything else is active work, and never an untriaged capture.
+        $query->whereNotIn('status', ['completed', 'archived'])->triaged();
+
+        match ($view) {
+            'today' => $query->where(function ($query) use ($today): void {
+                $query->where('workflow_state', Task::WORKFLOW_TODAY)
+                    ->orWhereDate('due_date', '<=', $today);
+            }),
+            'this_week' => $query->where(function ($query) use ($today): void {
+                $query->where('workflow_state', Task::WORKFLOW_THIS_WEEK)
+                    ->orWhereBetween('due_date', [$today, app(OperationalClock::class)->dateString(7)]);
+            }),
+            'upcoming' => $query->whereDate('due_date', '>=', $today),
+            'overdue' => $query->whereDate('due_date', '<', $today),
+            'waiting' => $query->where('workflow_state', Task::WORKFLOW_WAITING),
+            'delegated' => $query->where('workflow_state', Task::WORKFLOW_DELEGATED),
+            'later' => $query->where('workflow_state', Task::WORKFLOW_LATER),
+            default => null,
+        };
+    }
+
+    /** Counts for the view tabs. One bounded COUNT per view, no relations. */
+    private function viewCounts(Request $request, array $filters, string $today): array
+    {
+        $counts = [];
+
+        foreach (array_keys($this->viewDefinitions()) as $view) {
+            $query = $this->filteredTaskQuery($request, $filters, false);
+            $this->applyView($query, $view, $today);
+            $counts[$view] = $query->count();
+        }
+
+        return $counts;
+    }
+
+    /** @return array<int, array{value: string, label: string}> */
+    private function workflowOptions(): array
+    {
+        return array_map(
+            fn (string $state) => ['value' => $state, 'label' => Task::WORKFLOW_LABELS[$state] ?? $state],
+            Task::ASSIGNABLE_WORKFLOW_STATES,
+        );
+    }
+
+    private function filteredTaskQuery(Request $request, array $filters, bool $withRelations = true)
     {
         return Task::query()
-            ->with(['workspace:id,name', 'project:id,name', 'area:id,name', 'portfolio:id,name', 'assignee:id,name', 'reporter:id,name', 'labels:id,name,color'])
+            // Counting a view does not need seven relations loaded.
+            ->when($withRelations, fn ($query) => $query->with([
+                'project:id,name', 'area:id,name', 'portfolio:id,name', 'assignee:id,name', 'labels:id,name,color',
+            ]))
             ->where(function ($query) use ($request): void {
                 $query->where('assignee_id', $request->user()->id)
                     ->orWhere('reporter_id', $request->user()->id);
             })
-            ->when(! ($filters['status'] ?? null), fn ($query) => $query->where('status', '!=', 'archived'))
+            // The selected view decides whether archived work is included;
+            // the base query no longer second-guesses it.
             ->when($filters['search'] ?? null, function ($query, string $search): void {
                 $query->where(function ($query) use ($search): void {
                     $query->where('title', 'like', "%{$search}%")
@@ -102,7 +208,11 @@ class TaskController extends Controller
             })
             ->when($filters['status'] ?? null, fn ($query, string $status) => $query->where('status', $status))
             ->when($filters['priority'] ?? null, fn ($query, string $priority) => $query->where('priority', $priority))
-            ->when($filters['project_id'] ?? null, fn ($query, string $projectId) => $query->where('project_id', $projectId));
+            ->when($filters['project_id'] ?? null, fn ($query, string $projectId) => $query->where('project_id', $projectId))
+            ->when(
+                in_array($filters['workflow_state'] ?? null, Task::WORKFLOW_STATES, true),
+                fn ($query) => $query->where('workflow_state', $filters['workflow_state'])
+            );
     }
 
     private function orderActiveTasks($query): void
@@ -126,7 +236,6 @@ class TaskController extends Controller
             ->orderByDesc('completed_at')
             ->orderByDesc('updated_at');
     }
-
 
     public function create(?Project $project = null): Response
     {
@@ -152,6 +261,9 @@ class TaskController extends Controller
         $task = Task::create($data);
         $this->syncLabels($task, $request);
         $this->logActivity($task, $request->user()->id, 'task_created', 'Task was created.');
+        // A task created with a due date must get a reminder, exactly like one
+        // that acquires a due date through update()/status()/complete().
+        app(MiriamReminderService::class)->syncAfterTaskSaved($task->refresh(), $request->user(), true);
         app(TaskCollaborationService::class)->notifyAssignment($task->loadMissing('assignee'), $request->user()->id, true);
 
         return redirect()
@@ -236,6 +348,11 @@ class TaskController extends Controller
         $this->syncLabels($task, $request);
         $this->logImportantChanges($task->refresh(), $original, $request->user()->id);
         $this->createNextRecurringTaskIfNeeded($task, $original['status'] ?? null, $request->user()->id);
+        app(MiriamReminderService::class)->syncAfterTaskSaved(
+            $task->refresh(),
+            $request->user(),
+            $this->normalizeActivityValue($original['due_date'] ?? null) !== $this->normalizeActivityValue($task->due_date)
+        );
 
         if (($original['assignee_id'] ?? null) !== $task->assignee_id) {
             app(TaskCollaborationService::class)->notifyAssignment($task->loadMissing('assignee'), $request->user()->id, true);
@@ -256,21 +373,27 @@ class TaskController extends Controller
 
         $oldStatus = $task->status;
 
-        $task->update([
-            'status' => 'completed',
-            'completed_at' => now(),
-        ]);
-        $this->logActivity($task, request()->user()->id, 'task_completed', 'Task was marked complete.');
-        AuditLog::record($task->workspace_id, request()->user()->id, 'task_completed', $task, [
-            'task_title' => $task->title,
-        ]);
+        try {
+            // Same domain transition the Inbox, Today and Slack use, so the
+            // task leaves every active list the moment it is completed.
+            app(TaskTransitionService::class)->apply(
+                $task,
+                TaskTransitionService::COMPLETE,
+                request()->user(),
+                ['source' => 'task_page', 'reason' => 'Task was marked complete.']
+            );
+        } catch (InvalidTaskTransitionException $exception) {
+            return back()->with('error', $exception->getMessage());
+        }
+
         if ($oldStatus !== 'completed') {
             app(TaskCollaborationService::class)->notifyCompletion($task->loadMissing(['reporter', 'project.owner', 'project.members']), request()->user());
         }
         $this->createNextRecurringTaskIfNeeded($task, $oldStatus ?? null, request()->user()->id);
 
-        return redirect()
-            ->route('tasks.show', $task)
+        // Return where the operator was. Completing from Today used to eject
+        // them onto the task detail page on every single tick.
+        return back(fallback: route('tasks.show', $task))
             ->with('success', 'Task completed.');
     }
 
@@ -300,6 +423,7 @@ class TaskController extends Controller
             app(TaskCollaborationService::class)->notifyCompletion($task->loadMissing(['reporter', 'project.owner', 'project.members']), $request->user());
         }
         $this->createNextRecurringTaskIfNeeded($task, $oldStatus, $request->user()->id);
+        app(MiriamReminderService::class)->syncAfterTaskSaved($task->refresh(), $request->user());
 
         return back()->with('success', 'Task status updated.');
     }
@@ -310,6 +434,7 @@ class TaskController extends Controller
 
         $task->update(['status' => 'archived']);
         $this->logActivity($task, request()->user()->id, 'task_archived', 'Task was archived.');
+        app(MiriamReminderService::class)->syncAfterTaskSaved($task->refresh(), request()->user());
 
         return redirect()
             ->route('tasks.index')
@@ -320,14 +445,16 @@ class TaskController extends Controller
     {
         Gate::authorize('update', $task);
 
-        $task->update([
-            'status' => 'todo',
-            'completed_at' => null,
-        ]);
-        $this->logActivity($task, request()->user()->id, 'task_restored', 'Task was restored from archive.');
-        AuditLog::record($task->workspace_id, request()->user()->id, 'task_reopened', $task, [
-            'task_title' => $task->title,
-        ]);
+        try {
+            app(TaskTransitionService::class)->apply(
+                $task,
+                TaskTransitionService::REOPEN,
+                request()->user(),
+                ['source' => 'task_page', 'reason' => 'Task was reopened.']
+            );
+        } catch (InvalidTaskTransitionException $exception) {
+            return back()->with('error', $exception->getMessage());
+        }
 
         return redirect()
             ->route('tasks.show', $task)
@@ -349,7 +476,13 @@ class TaskController extends Controller
             'context' => ['nullable', 'string', 'max:255'],
             'energy_level' => ['nullable', 'string', 'max:255'],
             'focus_score' => ['nullable', 'integer', 'min:0', 'max:100'],
+            // `section` is the operator's own grouping label inside a project
+            // ("Phase 4 - Sales Kit"). It carries no behaviour, and the form
+            // offers existing labels rather than a bare text box.
             'section' => ['nullable', 'string', 'max:255'],
+            // The daily workflow bucket. Strictly canonical - arbitrary strings
+            // are rejected, because this one does drive behaviour.
+            'workflow_state' => ['nullable', Rule::in(Task::ASSIGNABLE_WORKFLOW_STATES)],
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'status' => ['required', Rule::in(Task::STATUSES)],
@@ -387,6 +520,17 @@ class TaskController extends Controller
             'priorities' => Task::PRIORITIES,
             'taskTypes' => Task::TYPES,
             'recurrenceTypes' => Task::RECURRENCE_TYPES,
+            'workflowStates' => $this->workflowOptions(),
+            // Grouping labels that already exist, so the form suggests real
+            // sections instead of inviting a free-text typo.
+            'sections' => Task::query()
+                ->whereIn('workspace_id', $workspaceIds)
+                ->whereNotNull('section')
+                ->distinct()
+                ->orderBy('section')
+                ->limit(200)
+                ->pluck('section')
+                ->values(),
         ];
     }
 
@@ -422,6 +566,9 @@ class TaskController extends Controller
             'energy_level' => $task->energy_level,
             'focus_score' => $task->focus_score,
             'section' => $task->section,
+            'workflow_state' => $task->workflow_state,
+            // The interface shows this, never the raw value.
+            'workflow_label' => Task::workflowLabel($task->workflow_state),
             'title' => $task->title,
             'description' => $task->description,
             'status' => $task->status,
@@ -437,6 +584,8 @@ class TaskController extends Controller
             'last_generated_at' => $task->last_generated_at?->toDateTimeString(),
             'completed_at' => $task->completed_at?->toDateTimeString(),
             'position' => $task->position,
+            'source' => $task->source,
+            'source_metadata' => $task->source_metadata ?? [],
             'workspace' => $task->workspace ? [
                 'id' => $task->workspace->id,
                 'name' => $task->workspace->name,

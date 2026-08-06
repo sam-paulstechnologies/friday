@@ -6,6 +6,7 @@ use App\Http\Controllers\Agents\AgentOrchestratorController;
 use App\Http\Controllers\Agents\AgentOutputReviewController;
 use App\Http\Controllers\Agents\TaskCaptureAgentController;
 use App\Http\Controllers\CalendarController;
+use App\Http\Controllers\CaptureController;
 use App\Http\Controllers\AreaController;
 use App\Http\Controllers\AssistantController;
 use App\Http\Controllers\BlockerController;
@@ -16,14 +17,16 @@ use App\Http\Controllers\GoalController;
 use App\Http\Controllers\HealthDisciplineController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\NoteController;
+use App\Http\Controllers\OperationsCenterController;
 use App\Http\Controllers\PortfolioController;
 use App\Http\Controllers\PlannerController;
-use App\Http\Controllers\PrioritizationReviewController;
+use App\Http\Controllers\InboxController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ProjectBoardController;
 use App\Http\Controllers\ProjectController;
 use App\Http\Controllers\ProjectMemberController;
 use App\Http\Controllers\ProjectTimelineController;
+use App\Http\Controllers\ReminderController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RiskController;
 use App\Http\Controllers\Settings\AiSettingsController;
@@ -39,11 +42,12 @@ use App\Http\Controllers\TaskReviewController;
 use App\Http\Controllers\TemplateController;
 use App\Http\Controllers\SlackMedicationActionController;
 use App\Http\Controllers\SlackEventsController;
-use App\Http\Controllers\SlackWebhookController;
+use App\Http\Controllers\Slack\SlackDailyReviewWebhookController;
 use App\Http\Controllers\SpiritualController;
 use App\Http\Controllers\TodayController;
 use App\Http\Controllers\WaitingItemController;
 use App\Http\Controllers\WorkloadController;
+use App\Services\Inbox\InboxService;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -59,7 +63,12 @@ Route::get('/', function () {
 
 Route::get('/dashboard', DashboardController::class)->middleware(['auth', 'verified'])->name('dashboard');
 
-Route::post('/webhooks/slack/events', SlackWebhookController::class)->name('webhooks.slack.events');
+// The previous handler on this route could not be constructed — it depended on
+// nine Development Manager classes that are absent from the repository, so
+// every request returned HTTP 500. It is replaced by a handler limited to the
+// daily-loop vocabulary that has working dependencies. The legacy controller
+// is left unrouted; restoring that module is a separate decision.
+Route::post('/webhooks/slack/events', SlackDailyReviewWebhookController::class)->name('webhooks.slack.events');
 Route::post('/slack/events', SlackEventsController::class)->name('slack.events');
 Route::post('/slack/medication/actions', SlackMedicationActionController::class)->name('slack.medication.actions');
 
@@ -67,8 +76,12 @@ Route::middleware('auth')->group(function () {
     Route::get('/assistant', [AssistantController::class, 'index'])->name('assistant.index');
     Route::post('/assistant/message', [AssistantController::class, 'message'])->name('assistant.message');
     Route::post('/assistant/actions/create-task', [AssistantController::class, 'createTask'])->name('assistant.actions.create-task');
+    Route::get('/operations-center', [OperationsCenterController::class, 'index'])->name('operations-center.index');
+    Route::get('/operations-center/graphs/{view}', [OperationsCenterController::class, 'graph'])->name('operations-center.graph');
+    Route::get('/operations-center/graphs/{view}/nodes/{node}', [OperationsCenterController::class, 'node'])->name('operations-center.nodes.show');
     Route::get('/agents', AgentIndexController::class)->name('agents.index');
     Route::get('/agents/orchestrator', [AgentOrchestratorController::class, 'index'])->name('agents.orchestrator.index');
+    Route::get('/agents/orchestrator/runs/{run}/logs', [AgentOrchestratorController::class, 'logs'])->name('agents.orchestrator.runs.logs');
     Route::post('/agents/orchestrator/run', [AgentOrchestratorController::class, 'run'])->name('agents.orchestrator.run');
     Route::post('/agents/orchestrator/run-agent', [AgentOrchestratorController::class, 'runAgent'])->name('agents.orchestrator.run-agent');
     Route::post('/agents/outputs/{output}/approve', [AgentOutputReviewController::class, 'approve'])->name('agents.outputs.approve');
@@ -76,6 +89,10 @@ Route::middleware('auth')->group(function () {
     Route::post('/agents/outputs/{output}/send-to-today', [AgentOutputReviewController::class, 'sendToToday'])->name('agents.outputs.send-to-today');
     Route::get('/agents/task-capture', [TaskCaptureAgentController::class, 'index'])->name('agents.task-capture.index');
     Route::post('/agents/task-capture/run', [TaskCaptureAgentController::class, 'run'])->name('agents.task-capture.run');
+    // Parsed proposals convert through the shared capture pipeline instead of
+    // dead-ending on an empty task form.
+    Route::post('/agents/task-capture/outputs/{output}/capture', [TaskCaptureAgentController::class, 'capture'])
+        ->name('agents.task-capture.capture');
     Route::get('/health', [HealthDisciplineController::class, 'index'])->name('health.index');
     Route::post('/health/daily-log', [HealthDisciplineController::class, 'storeDailyLog'])->name('health.daily-log.store');
     Route::post('/health/medications', [HealthDisciplineController::class, 'storeMedication'])->name('health.medications.store');
@@ -92,6 +109,8 @@ Route::middleware('auth')->group(function () {
     Route::patch('/today/tasks/{task}/today', [TodayController::class, 'today'])->name('today.tasks.today');
     Route::patch('/today/tasks/{task}/tomorrow', [TodayController::class, 'tomorrow'])->name('today.tasks.tomorrow');
     Route::patch('/today/tasks/{task}/snooze', [TodayController::class, 'snooze'])->name('today.tasks.snooze');
+    Route::patch('/today/tasks/{task}/later', [TodayController::class, 'later'])->name('today.tasks.later');
+    Route::patch('/today/tasks/{task}/waiting', [TodayController::class, 'waiting'])->name('today.tasks.waiting');
     Route::get('/areas', [AreaController::class, 'index'])->name('areas.index');
     Route::get('/areas/{area}', [AreaController::class, 'show'])->name('areas.show');
     Route::get('/portfolios', [PortfolioController::class, 'index'])->name('portfolios.index');
@@ -152,8 +171,24 @@ Route::middleware('auth')->group(function () {
     Route::get('/reports', [ReportController::class, 'index'])->name('reports.index');
     Route::get('/workload', [WorkloadController::class, 'index'])->name('workload.index');
     Route::get('/task-review', [TaskReviewController::class, 'index'])->name('task-review.index');
-    Route::get('/prioritization-review', [PrioritizationReviewController::class, 'index'])->name('prioritization-review.index');
-    Route::patch('/prioritization-review/apply', [PrioritizationReviewController::class, 'apply'])->name('prioritization-review.apply');
+
+    // Quick Capture — the web counterpart to Slack thought capture. Both
+    // entry points write the same record into the same Inbox.
+    Route::post('/capture', [CaptureController::class, 'store'])->name('capture.store');
+
+    // Reminders — finite Reminder Poker state, visible outside Slack.
+    Route::get('/reminders', [ReminderController::class, 'index'])->name('reminders.index');
+
+    // Inbox — the triage surface for captures that are not yet tasks.
+    Route::get('/inbox', [InboxController::class, 'index'])->name('inbox.index');
+    Route::get('/inbox/{source}/{id}', [InboxController::class, 'show'])
+        ->whereIn('source', InboxService::SOURCES)->whereNumber('id')->name('inbox.show');
+    Route::post('/inbox/{source}/{id}/convert', [InboxController::class, 'convert'])
+        ->whereIn('source', InboxService::SOURCES)->whereNumber('id')->name('inbox.convert');
+    Route::post('/inbox/{source}/{id}/move', [InboxController::class, 'move'])
+        ->whereIn('source', InboxService::SOURCES)->whereNumber('id')->name('inbox.move');
+    Route::post('/inbox/{source}/{id}/dismiss', [InboxController::class, 'dismiss'])
+        ->whereIn('source', InboxService::SOURCES)->whereNumber('id')->name('inbox.dismiss');
 
     Route::get('/waiting', [WaitingItemController::class, 'index'])->name('waiting.index');
     Route::post('/waiting', [WaitingItemController::class, 'store'])->name('waiting.store');
@@ -180,6 +215,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/tasks', [TaskController::class, 'index'])->name('tasks.index');
     Route::get('/tasks/create', [TaskController::class, 'create'])->name('tasks.create');
     Route::post('/tasks', [TaskController::class, 'store'])->name('tasks.store');
+    // JSON source for the task detail drawer. Same policy as the full page.
+    Route::get('/tasks/{task}/panel', [TaskController::class, 'panel'])->name('tasks.panel');
     Route::get('/tasks/{task}', [TaskController::class, 'show'])->name('tasks.show');
     Route::get('/tasks/{task}/edit', [TaskController::class, 'edit'])->name('tasks.edit');
     Route::patch('/tasks/{task}', [TaskController::class, 'update'])->name('tasks.update');

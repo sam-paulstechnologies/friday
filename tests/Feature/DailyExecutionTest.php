@@ -16,6 +16,7 @@ use App\Services\Slack\SlackCommandParser;
 use Database\Seeders\SpiritualBibleReadingPlanSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Inertia\Testing\AssertableInertia;
 use Tests\TestCase;
 
 class DailyExecutionTest extends TestCase
@@ -29,7 +30,9 @@ class DailyExecutionTest extends TestCase
         $response = $this->actingAs($user)->get(route('today.index'));
 
         $response->assertOk();
-        $response->assertSee('Today/Index');
+        // Assert the Inertia component, not the raw HTML: the page name is
+        // JSON-escaped inside data-page, so assertSee() could never match it.
+        $response->assertInertia(fn (AssertableInertia $page) => $page->component('Today/Index'));
     }
 
     public function test_daily_review_service_groups_overdue_due_today_and_upcoming(): void

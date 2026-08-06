@@ -5,9 +5,10 @@ namespace App\Http\Controllers\Agents;
 use App\Http\Controllers\Controller;
 use App\Models\AgentOutput;
 use App\Models\AgentRun;
-use App\Models\AgentRunLog;
 use App\Services\Agents\AgentOrchestratorService;
+use App\Services\OperationsCenter\OperationsCenterGraphService;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -15,7 +16,7 @@ use Inertia\Response;
 
 class AgentOrchestratorController extends Controller
 {
-    public function index(Request $request, AgentOrchestratorService $orchestrator): Response
+    public function index(Request $request, AgentOrchestratorService $orchestrator, OperationsCenterGraphService $graphs): Response
     {
         $orchestrator->ensureAgents();
         $runId = $request->integer('run');
@@ -37,6 +38,9 @@ class AgentOrchestratorController extends Controller
             'selectedRun' => $selectedRun ? $this->runResource($selectedRun) : null,
             'recentRuns' => $recentRuns,
             'prefillAgent' => $request->string('agent')->toString(),
+            'graph' => $graphs->agentOrchestrator($request->user()),
+            'graphEndpoint' => route('operations-center.graph', ['view' => 'agent-orchestrator'], false),
+            'detailsEndpoint' => route('operations-center.nodes.show', ['view' => 'agent-orchestrator', 'node' => '__NODE__'], false),
         ]);
     }
 
@@ -64,6 +68,37 @@ class AgentOrchestratorController extends Controller
                 : 'Selected agent completed with a reviewable output.');
     }
 
+    public function logs(Request $request, AgentRun $run): JsonResponse
+    {
+        abort_unless($run->user_id === $request->user()->id, 403);
+
+        $rootRun = $run->parent_run_id
+            ? AgentRun::query()->where('user_id', $request->user()->id)->findOrFail($run->parent_run_id)
+            : $run;
+
+        $logs = AgentRun::query()
+            ->with(['agent', 'logs'])
+            ->where(function ($query) use ($rootRun): void {
+                $query->whereKey($rootRun->id)
+                    ->orWhere('parent_run_id', $rootRun->id);
+            })
+            ->get()
+            ->flatMap(fn (AgentRun $agentRun) => $agentRun->logs->map(fn ($log) => [
+                'id' => $log->id,
+                'agent' => $agentRun->agent?->name,
+                'level' => $log->level,
+                'message' => $log->message,
+                'occurred_at' => $log->occurred_at?->toDateTimeString(),
+            ]))
+            ->sortBy('occurred_at')
+            ->values();
+
+        return response()->json([
+            'run_id' => $rootRun->id,
+            'logs' => $logs,
+        ]);
+    }
+
     private function validatedRunData(Request $request, AgentOrchestratorService $orchestrator, bool $selectedOnly): array
     {
         $agentKeys = collect($orchestrator->agentOptions())->pluck('key')->all();
@@ -80,7 +115,7 @@ class AgentOrchestratorController extends Controller
     private function baseRunQuery(Request $request)
     {
         return AgentRun::query()
-            ->with(['agent', 'outputs', 'logs', 'childRuns.agent', 'childRuns.outputs', 'childRuns.logs'])
+            ->with(['agent', 'outputs', 'childRuns.agent', 'childRuns.outputs'])
             ->where('user_id', $request->user()->id)
             ->whereNull('parent_run_id')
             ->whereHas('agent', fn ($query) => $query->where('slug', AgentOrchestratorService::ORCHESTRATOR));
@@ -88,15 +123,11 @@ class AgentOrchestratorController extends Controller
 
     private function runResource(AgentRun $run): array
     {
-        $run->loadMissing(['agent', 'outputs', 'logs', 'childRuns.agent', 'childRuns.outputs', 'childRuns.logs']);
+        $run->loadMissing(['agent', 'outputs', 'childRuns.agent', 'childRuns.outputs']);
         $childRuns = $run->childRuns->sortBy('created_at')->values();
         $outputs = $run->outputs
             ->merge($childRuns->flatMap(fn (AgentRun $child) => $child->outputs))
             ->sortBy('created_at')
-            ->values();
-        $logs = $run->logs
-            ->merge($childRuns->flatMap(fn (AgentRun $child) => $child->logs))
-            ->sortBy('occurred_at')
             ->values();
 
         return [
@@ -109,14 +140,8 @@ class AgentOrchestratorController extends Controller
             'error_message' => $run->error_message,
             'outputs' => $outputs->map(fn (AgentOutput $output) => $this->outputResource($output))->values(),
             'childRuns' => $childRuns->map(fn (AgentRun $child) => $this->runSummary($child))->values(),
-            'logs' => $logs->map(fn (AgentRunLog $log) => [
-                'id' => $log->id,
-                'agent' => $log->run?->agent?->name,
-                'level' => $log->level,
-                'message' => $log->message,
-                'context' => $log->context ?? [],
-                'occurred_at' => $log->occurred_at?->toDateTimeString(),
-            ])->values(),
+            'logs_loaded' => false,
+            'logs_endpoint' => route('agents.orchestrator.runs.logs', $run, false),
         ];
     }
 

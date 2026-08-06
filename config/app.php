@@ -69,6 +69,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Operational Timezone
+    |--------------------------------------------------------------------------
+    |
+    | Timestamps are stored and processed in UTC (see above). This is the
+    | timezone the operator actually lives in: it decides what "today",
+    | "tomorrow" and "overdue" mean, and it is used to convert an operational
+    | calendar day into the UTC range used for timestamp queries. Resolve it
+    | through App\Support\OperationalClock rather than reading it directly.
+    |
+    */
+
+    'operational_timezone' => env('APP_OPERATIONAL_TIMEZONE', 'Asia/Dubai'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Locale Configuration
     |--------------------------------------------------------------------------
     |

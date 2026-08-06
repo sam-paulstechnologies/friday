@@ -34,6 +34,8 @@ export default function TaskForm({
     priorities,
     taskTypes = [],
     recurrenceTypes = [],
+    workflowStates = [],
+    sections = [],
     submitLabel,
 }) {
     const initialWorkspaceId = task?.workspace_id ?? prefilledProject?.workspace_id ?? workspaces[0]?.id ?? '';
@@ -49,6 +51,7 @@ export default function TaskForm({
         parent_task_id: task?.parent_task_id ?? '',
         task_type: task?.task_type ?? 'task',
         section: task?.section ?? '',
+        workflow_state: task?.workflow_state ?? '',
         title: task?.title ?? '',
         description: task?.description ?? '',
         status: task?.status ?? 'todo',
@@ -210,16 +213,47 @@ export default function TaskForm({
                     <InputError message={errors.assignee_id} className="mt-2" />
                 </div>
 
+                {/* The daily bucket. Canonical values only - this one drives
+                    behaviour, so it can never be free text. */}
+                <div>
+                    <InputLabel htmlFor="workflow_state" value="Bucket" />
+                    <select
+                        id="workflow_state"
+                        value={data.workflow_state}
+                        onChange={(event) => setData('workflow_state', event.target.value)}
+                        className="mt-1 block w-full rounded-md border-slate-300 text-sm focus:border-brand-500 focus:ring-brand-500/25"
+                    >
+                        <option value="">Not scheduled</option>
+                        {workflowStates.map((state) => (
+                            <option key={state.value} value={state.value}>
+                                {state.label}
+                            </option>
+                        ))}
+                    </select>
+                    <InputError message={errors.workflow_state} className="mt-2" />
+                    <p className="mt-1 text-xs text-slate-500">Where this sits in your day. Changes list membership.</p>
+                </div>
+
+                {/* The operator's own grouping label inside a project. Existing
+                    labels are offered so a typo cannot invent a phantom one. */}
                 <div>
                     <InputLabel htmlFor="section" value="Section" />
-                    <TextInput
+                    <input
                         id="section"
+                        list="task-section-options"
                         value={data.section}
                         onChange={(event) => setData('section', event.target.value)}
-                        className="mt-1 block w-full"
-                        placeholder="Backlog, Launch, Operations"
+                        className="mt-1 block w-full rounded-md border-slate-300 text-sm focus:border-brand-500 focus:ring-brand-500/25"
+                        placeholder="Choose or add a section"
+                        autoComplete="off"
                     />
+                    <datalist id="task-section-options">
+                        {sections.map((section) => (
+                            <option key={section} value={section} />
+                        ))}
+                    </datalist>
                     <InputError message={errors.section} className="mt-2" />
+                    <p className="mt-1 text-xs text-slate-500">A grouping label inside the project, like a phase.</p>
                 </div>
             </div>
 

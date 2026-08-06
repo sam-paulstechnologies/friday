@@ -115,15 +115,11 @@ class SlackMedicationActionController extends Controller
             return $this->slackResponse('I could not find that reminder.');
         }
 
-        if ($action === 'miriam_reminder_done') {
-            return $this->slackResponse($reminders->handleSlackAction($reminder, $action, $slackUser, $payload));
+        if (filled($reminder->slack_user_id) && $reminder->slack_user_id !== $slackUser) {
+            return $this->slackResponse('You cannot change that Miriam reminder.');
         }
 
-        if ($action === 'miriam_reminder_snooze_15') {
-            return $this->slackResponse($reminders->handleSlackAction($reminder, $action, $slackUser, $payload));
-        }
-
-        if ($action === 'miriam_reminder_cancel') {
+        if (is_string($action) && str_starts_with($action, 'miriam_reminder_')) {
             return $this->slackResponse($reminders->handleSlackAction($reminder, $action, $slackUser, $payload));
         }
 
