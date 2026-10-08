@@ -5,17 +5,18 @@ namespace Tests\Feature;
 use App\Models\AgentOutput;
 use App\Models\AgentRun;
 use App\Models\MiriamReminder;
-use App\Models\Project;
 use App\Models\Task;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Services\Agents\TaskCaptureAgent;
+use App\Services\Inbox\InboxService;
 use App\Services\Inbox\WebCaptureService;
 use App\Services\Miriam\MiriamSlackThoughtCaptureService;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
 use Inertia\Testing\AssertableInertia;
 use RuntimeException;
 use Tests\TestCase;
@@ -123,7 +124,7 @@ class MiriamRedesignTest extends TestCase
         $this->assertTrue($task->source_metadata['needs_review']);
         $this->assertFalse($task->source_metadata['classified']);
 
-        $items = app(\App\Services\Inbox\InboxService::class)->items($this->user);
+        $items = app(InboxService::class)->items($this->user);
 
         $this->assertSame('clarification_needed', $items['open'][0]['state']);
     }
@@ -174,7 +175,7 @@ class MiriamRedesignTest extends TestCase
                 ->where('inbox.counts.open', 2)
             );
 
-        $sources = collect(app(\App\Services\Inbox\InboxService::class)->items($this->user)['open'])
+        $sources = collect(app(InboxService::class)->items($this->user)['open'])
             ->pluck('capture_source')
             ->sort()
             ->values()
@@ -288,7 +289,7 @@ class MiriamRedesignTest extends TestCase
         $page = file_get_contents(resource_path('js/Pages/Agents/TaskCapture/Index.jsx'));
 
         $this->assertStringNotContainsString("route('tasks.create')", $page);
-        $this->assertStringContainsString("agents.task-capture.capture", $page);
+        $this->assertStringContainsString('agents.task-capture.capture', $page);
     }
 
     public function test_a_task_capture_proposal_converts_through_the_shared_pipeline(): void
@@ -433,10 +434,18 @@ class MiriamRedesignTest extends TestCase
             'settings.automations.index', 'settings.ai.edit', 'templates.index', 'admin.custom-fields.index',
         ];
 
+        config(['security.platform_admin_user_ids' => []]);
         foreach ($routes as $name) {
-            $this->assertTrue(\Illuminate\Support\Facades\Route::has($name), "Route [{$name}] is missing.");
-            $this->actingAs($this->user)->get(route($name))->assertSuccessful();
+            $this->assertTrue(Route::has($name), "Route [{$name}] is missing.");
+            $response = $this->actingAs($this->user)->get(route($name));
+            if ($name === 'settings.ai.edit') {
+                $response->assertForbidden();
+            } else {
+                $response->assertSuccessful();
+            }
         }
+        config(['security.platform_admin_user_ids' => [$this->user->id]]);
+        $this->actingAs($this->user)->get(route('settings.ai.edit'))->assertSuccessful();
     }
 
     public function test_the_reminders_page_reports_finite_poker_state(): void

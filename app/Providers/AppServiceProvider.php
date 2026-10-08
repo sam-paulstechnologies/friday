@@ -9,6 +9,7 @@ use App\Models\Project;
 use App\Models\ProjectTemplate;
 use App\Models\Task;
 use App\Models\TaskAttachment;
+use App\Models\User;
 use App\Models\Workspace;
 use App\Policies\CustomFieldPolicy;
 use App\Policies\LabelPolicy;
@@ -48,6 +49,8 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(TaskAttachment::class, TaskAttachmentPolicy::class);
         Gate::policy(Workspace::class, WorkspacePolicy::class);
         Gate::policy(DatabaseNotification::class, NotificationPolicy::class);
+
+        Gate::define('manageGlobalAiSettings', fn (User $user): bool => in_array((int) $user->getKey(), config('security.platform_admin_user_ids', []), true));
 
         Vite::prefetch(concurrency: 3);
     }

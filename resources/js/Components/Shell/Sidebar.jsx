@@ -100,7 +100,10 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onNavigat
         inbox: page.props.inbox?.open_count ?? 0,
         notifications: page.props.notifications?.unread_count ?? 0,
     };
-    const groups = resolveNavigation(hasRoute);
+    const groups = resolveNavigation(hasRoute).map((group) => ({
+        ...group,
+        items: group.items.filter((item) => item.key !== 'ai' || page.props.auth?.can_manage_global_ai),
+    })).filter((group) => group.items.length > 0);
     const workspace = page.props.workspace?.name;
 
     return (

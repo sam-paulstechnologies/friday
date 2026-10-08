@@ -15,7 +15,7 @@ class AiSettingsTest extends TestCase
 
     public function test_ai_settings_page_loads(): void
     {
-        $user = User::factory()->create();
+        $user = $this->administrator();
 
         $this->actingAs($user)
             ->get(route('settings.ai.edit'))
@@ -32,7 +32,7 @@ class AiSettingsTest extends TestCase
 
     public function test_api_key_is_encrypted_at_rest(): void
     {
-        $user = User::factory()->create();
+        $user = $this->administrator();
         $apiKey = 'sk-test-secretabcd';
 
         $this->actingAs($user)->patch(route('settings.ai.update'), $this->payload([
@@ -49,7 +49,7 @@ class AiSettingsTest extends TestCase
 
     public function test_api_key_is_masked_when_returned(): void
     {
-        $user = User::factory()->create();
+        $user = $this->administrator();
         $apiKey = 'sk-test-secretabcd';
         $setting = new AiSetting(['provider' => AiSetting::PROVIDER_OPENAI]);
         $setting->setApiKey($apiKey);
@@ -73,7 +73,7 @@ class AiSettingsTest extends TestCase
 
     public function test_updating_models_works(): void
     {
-        $user = User::factory()->create();
+        $user = $this->administrator();
 
         $this->actingAs($user)->patch(route('settings.ai.update'), $this->payload([
             'api_key' => 'sk-test-secretabcd',
@@ -122,6 +122,15 @@ class AiSettingsTest extends TestCase
         ])->save();
 
         $this->assertFalse(app(AiSettingsService::class)->isEnabled());
+    }
+
+    private function administrator(): User
+    {
+        $user = User::factory()->create();
+        config(['security.platform_admin_user_ids' => [$user->id]]);
+        $this->withSession(['auth.password_confirmed_at' => time()]);
+
+        return $user;
     }
 
     private function payload(array $overrides = []): array
