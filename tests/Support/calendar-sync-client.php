@@ -39,6 +39,7 @@ if (file_exists($root.'/no-config-cache.php')) {
 require dirname(__DIR__, 2).'/vendor/autoload.php';
 $app = require dirname(__DIR__, 2).'/bootstrap/app.php';
 $app->make(Kernel::class)->bootstrap();
+file_put_contents($root.'/test-stage', 'booted');
 Http::preventStrayRequests();
 $facts = DB::selectOne('SELECT @@datadir AS datadir');
 $data = realpath($facts->datadir);
@@ -47,7 +48,9 @@ if (! $data || ! str_starts_with($data.DIRECTORY_SEPARATOR, $root.DIRECTORY_SEPA
     throw new RuntimeException('Server datadir did not prove isolation.');
 }
 if ($mode === 'setup') {
+    file_put_contents($root.'/test-stage', 'migrating-fixtures');
     Artisan::call('migrate', ['--force' => true]);
+    file_put_contents($root.'/test-stage', 'creating-fixtures');
     $user = User::factory()->create();
     $workspace = Workspace::create(['name' => 'Synthetic Calendar', 'slug' => 'calendar', 'created_by' => $user->id]);
     $workspace->users()->attach($user->id, ['role' => 'owner', 'joined_at' => now()]);

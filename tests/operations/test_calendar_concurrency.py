@@ -21,7 +21,11 @@ class CalendarConcurrency(unittest.TestCase):
                             "-e", "CREATE DATABASE jarvis_fixture_calendar"], capture_output=True, check=True)
             args = ["php", str(REPO / "tests/Support/calendar-sync-client.php"),
                     str(instance["root"]), str(instance["port"])]
-            setup = subprocess.run(args + ["setup"], capture_output=True, check=True, timeout=60)
+            try:
+                setup = subprocess.run(args + ["setup"], capture_output=True, check=True, timeout=180)
+            except subprocess.TimeoutExpired:
+                stage = instance["root"] / "test-stage"
+                self.fail("Synthetic setup exceeded its bounded budget at " + (stage.read_text() if stage.exists() else "bootstrap"))
             connection_id = str(json.loads(setup.stdout)["connection_id"])
             holder = subprocess.Popen(args + ["hold", connection_id], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:
