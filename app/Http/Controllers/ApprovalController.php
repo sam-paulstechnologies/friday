@@ -7,11 +7,30 @@ use Illuminate\Http\Request;
 
 class ApprovalController extends CommandCenterController
 {
-    protected function modelClass(): string { return Approval::class; }
-    protected function page(): string { return 'Approvals/Index'; }
-    protected function openStatus(): string { return 'pending'; }
-    protected function closedStatus(): string { return 'approved'; }
-    protected function closedTimestampColumn(): string { return 'approved_at'; }
+    protected function modelClass(): string
+    {
+        return Approval::class;
+    }
+
+    protected function page(): string
+    {
+        return 'Approvals/Index';
+    }
+
+    protected function openStatus(): string
+    {
+        return 'pending';
+    }
+
+    protected function closedStatus(): string
+    {
+        return 'approved';
+    }
+
+    protected function closedTimestampColumn(): string
+    {
+        return 'approved_at';
+    }
 
     protected function extraValidation(): array
     {
@@ -32,7 +51,8 @@ class ApprovalController extends CommandCenterController
 
     public function reject(Request $request, Approval $approval)
     {
-        abort_unless($approval->user_id === $request->user()->id, 403);
+        $this->access->authorizeWrite($request->user(), $approval);
+        $this->access->validateRelations($request->user(), $approval->only(['area_id', 'portfolio_id', 'project_id', 'task_id']));
 
         $approval->update([
             'status' => 'rejected',
