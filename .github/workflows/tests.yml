@@ -2,46 +2,162 @@ name: Tests
 
 on:
   push:
-    branches:
-      - master
-      - '*.x'
+    branches: [main, master, '*.x', 'codex/**']
   pull_request:
+  merge_group:
   schedule:
     - cron: '0 0 * * *'
 
 permissions:
   contents: read
 
+concurrency:
+  group: tests-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_ENV: testing
+  APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  CI: 'true'
+
 jobs:
-  tests:
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: true
-      matrix:
-        php: [8.2, 8.3, 8.4]
-
+  php:
     name: PHP ${{ matrix.php }}
-
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
+      - uses: shivammathur/setup-php@bf6b4fbd49ca58e4608c9c89fba0b8d90bd2a39f # 2.35.5
         with:
           php-version: ${{ matrix.php }}
-          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite
+          extensions: dom, curl, mbstring, zip, pdo_sqlite
           coverage: none
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: npm ci && npm run build
+      - name: Lint changed PHP
+        env:
+          LINT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: php tools/ci/lint_changed.php
+      - name: Execute all PHPUnit contracts
+        run: |
+          mkdir -p test-results
+          php vendor/bin/phpunit --log-junit test-results/raw-junit.xml
+      - if: always() && hashFiles('test-results/raw-junit.xml') != ''
+        run: python3 tools/ci/summarize_results.py test-results/raw-junit.xml test-results/published
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: php-${{ matrix.php }}-results
+          path: test-results/published/
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Install Composer dependencies
-        run: composer install --prefer-dist --no-interaction --no-progress
+  mysql:
+    name: MySQL 8 compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: jarvis_ci
+          MYSQL_USER: jarvis_ci
+          MYSQL_PASSWORD: synthetic-ci-password
+          MYSQL_ROOT_PASSWORD: synthetic-ci-root-password
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: shivammathur/setup-php@bf6b4fbd49ca58e4608c9c89fba0b8d90bd2a39f # 2.35.5
+        with:
+          php-version: '8.3'
+          extensions: dom, curl, mbstring, zip, pdo_mysql
+          coverage: none
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: npm ci && npm run build
+      - name: Execute all contracts on disposable MySQL
+        env:
+          CI_MYSQL_DISPOSABLE: '1'
+        run: |
+          mkdir -p test-results
+          php vendor/bin/phpunit --log-junit test-results/raw-junit.xml
+      - if: always() && hashFiles('test-results/raw-junit.xml') != ''
+        run: python3 tools/ci/summarize_results.py test-results/raw-junit.xml test-results/published
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mysql-results
+          path: test-results/published/
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Copy environment file
-        run: cp .env.example .env
+  frontend:
+    name: Frontend and gate contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: npm ci && npm run build
+      - run: python3 -m unittest discover -s tools/ci -p 'test_*.py'
 
-      - name: Generate app key
-        run: php artisan key:generate
+  e2e:
+    name: Isolated desktop and mobile smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_USER_EMAIL: jarvis-ci@example.test
+      PLAYWRIGHT_USER_PASSWORD: synthetic-e2e-password
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: shivammathur/setup-php@bf6b4fbd49ca58e4608c9c89fba0b8d90bd2a39f # 2.35.5
+        with:
+          php-version: '8.3'
+          extensions: dom, curl, mbstring, zip, pdo_sqlite
+          coverage: none
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: composer install --prefer-dist --no-interaction --no-progress
+      - run: npm ci && npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: php tools/testing/seed-e2e.php
+      - run: npx playwright test
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: isolated-e2e-results
+          path: |
+            test-results/e2e-junit.xml
+            playwright-report/
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Execute tests
-        run: vendor/bin/phpunit
+  required:
+    name: JARVIS required checks
+    needs: [php, mysql, frontend, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Require every validation job to pass
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 tools/ci/required_check.py "$NEEDS_JSON"

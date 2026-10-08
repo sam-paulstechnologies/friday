@@ -7,9 +7,11 @@ test('mobile dashboard and my day navigation smoke test', async ({ page }) => {
     skipIfMissingCredentials();
 
     await login(page);
-    await expect(page.getByTestId('dashboard-page')).toBeVisible();
-    await page.getByTestId('mobile-nav-toggle').click();
-    await expect(page.getByTestId('sidebar-nav')).toBeVisible();
-    await page.getByRole('link', { name: 'My Day' }).click();
-    await expect(page.getByTestId('today-page')).toBeVisible();
+    await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
+    const navigation = page.getByRole('dialog');
+    const todayLink = navigation.getByRole('link', { name: 'Today', exact: true });
+    await expect(todayLink).toBeVisible();
+    await todayLink.click();
+    await expect(todayLink).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Priority work', exact: true })).toBeVisible();
 });

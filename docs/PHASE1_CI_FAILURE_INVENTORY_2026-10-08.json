@@ -1,0 +1,816 @@
+{
+  "base_sha": "78527ef4a00ab8bd906f0514bbe86ff5a0b0aa87",
+  "profile": "isolated PHP 8.3 SQLite, frontend built",
+  "total": 575,
+  "passed": 460,
+  "errors": 87,
+  "failures": 28,
+  "skipped": 0,
+  "tests": [
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_missing_invalid_and_disabled_runner_tokens_are_rejected",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_valid_heartbeat_updates_last_seen_and_runner_details",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_starting_job_creates_phase_runs_and_waits_without_runner",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_starting_job_assigns_active_runner",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_valid_runner_can_fetch_next_job_and_other_runner_cannot",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_can_mark_job_started_phase_started_and_submit_result",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_dry_run_phase_result_is_accepted_without_completing_job_or_passing_phase",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_normal_one_phase_result_stores_artifacts_and_completes_without_approval",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_fake_codex_one_phase_result_is_stored_as_simulated_and_does_not_advance",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_multi_phase_disabled_by_default_in_runner_config",
+      "kind": "error",
+      "type": "ErrorException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_controlled_multi_phase_passed_phase_assigns_next_phase",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_controlled_multi_phase_failed_unclear_or_safety_results_do_not_assign_next_phase",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_active_failure_blocks_controlled_multi_phase_progression",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_controlled_multi_phase_all_phases_passed_marks_job_completed",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_failed_validation_does_not_mark_phase_passed",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_safety_risk_does_not_mark_phase_passed",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_build_failure_is_classified_as_auto_fixable",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_db_connection_refused_is_classified_as_user_at_system",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_failed_phase_creates_failure_record_and_does_not_move_forward",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_apply_fix_creates_fix_attempt_and_runner_instruction",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_fix_result_marks_failure_fixed_and_continues_without_approval",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_manual_fix_resume_and_rollback_instructions_are_explicit",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_stop_job_cancels_safely",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_token_is_not_exposed_in_responses",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_can_fail_job_and_complete_only_after_phase_allows_it",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_instruction_endpoint_returns_safe_prompt_payload",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_development_manager_page_requires_auth_and_loads_for_user",
+      "kind": "error",
+      "type": "Symfony\\Component\\Routing\\Exception\\RouteNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_development_manager_page_displays_dry_run_status_props",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_development_manager_page_displays_one_phase_artifacts",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_development_manager_page_displays_failure_recovery_props",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_app_user_can_start_and_cancel_queued_job",
+      "kind": "error",
+      "type": "Symfony\\Component\\Routing\\Exception\\RouteNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_dev_status_go_and_stop_are_deterministic",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_dev_go_multi_pause_and_resume_are_safe_cloud_actions",
+      "kind": "error",
+      "type": "Illuminate\\Database\\Eloquent\\ModelNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_dev_status_includes_runner_heartbeat_and_dry_run",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_dev_status_includes_one_phase_result_summary",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_monitor_classifies_runner_health_states",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_monitor_reports_blocked_failed_manual_and_release_approval_conditions",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_monitor_commands_are_safe_with_no_runners_or_jobs",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_monitor_output_does_not_expose_tokens",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_close_verification_artifacts_disables_temp_runners_and_closes_records_without_deleting",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_bootstrap_local_creates_ignored_safe_config_and_assigns_apps_without_printing_token",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_monitor_deduplicates_slack_alerts_for_same_issue",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_monitor_alerts_can_be_muted_unmuted_and_reported",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_normal_completed_phase_records_ledger_and_sends_summary_without_approval_card",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_manual_validation_requested_stays_quiet_for_normal_failure",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_safety_gate_slack_approval_notification_deduplicates_same_gate",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_proactive_slack_notification_does_not_expose_tokens_or_secrets",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_dev_failures_returns_safe_summary_and_actions_require_signature",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_monitor_summary_runner_status_and_alert_commands_return_safe_text",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_slash_command_dev_summary_routes_to_development_manager_summary",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_slash_command_dev_monitor_and_runner_status_still_route",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_slash_command_dev_failures_returns_failure_blocks_not_generic_ok",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_slash_command_unknown_command_returns_helpful_text",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_apply_fix_creates_attempt",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_approve_job_approves_waiting_for_approval_job",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_approve_alias_and_button_use_same_approval_flow",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_waiting_for_approval_failure_actions_show_approve_complete_instead_of_resume",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_approval_fails_if_validation_did_not_pass_or_failure_unresolved",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_normal_manual_validation_result_stores_ledger_only_and_completes",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_safety_gate_manual_validation_still_requires_attention_message",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_dev_resume_remains_for_paused_jobs_only",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_interaction_payload_routes_to_apply_fix",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_interaction_payload_rejects_invalid_signature_and_unauthorized_user",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_interaction_payload_routes_to_show_manual_resume_and_rollback_actions",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_interaction_payload_can_stop_job_safely",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_create_test_failure_command_creates_safe_fake_failure",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_close_test_failures_command_stops_artifacts_without_deleting",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_example_config_requires_explicit_real_execution_flags",
+      "kind": "error",
+      "type": "ErrorException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_release_package_can_be_requested_only_for_completed_app_job",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_failed_job_cannot_create_release_package",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_can_submit_release_package_result_and_approval_can_be_decided",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_cannot_update_another_runners_release_package",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_release_package_manifest_with_env_is_rejected",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_slack_release_commands_work_without_deploying",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_release_package_resources_include_qa_checklist",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_runner_status_warns_about_duplicate_active_runners",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_development_ledger_dashboard_shows_completed_current_due_and_blockers",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_historical_ledger_replay_does_not_send_slack_summary",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_development_started_message_is_sent_once_per_app_job_phase",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_development_name_and_short_description_are_stored_in_ledger",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_completed_ledger_summary_notifies_once_with_durable_dedupe_key",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_empty_normal_completed_ledger_does_not_post_to_slack",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_old_waiting_approval_cards_are_suppressed_after_quiet_mode",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_stale_approval_notices_can_be_archived_without_closing_gate",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_stale_approval_archive_preserves_true_safety_gates",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_mute_noise_command_is_idempotent_and_keeps_safety_gates_active",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_quiet_development_mode_suppresses_normal_approval_cards",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_auto_fixable_failures_do_not_notify_before_three_attempts",
+      "kind": "error",
+      "type": "Illuminate\\Contracts\\Container\\BindingResolutionException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_natural_language_slack_status_and_app_queries_are_read_only",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_natural_language_start_task_creates_pending_confirmation_not_job",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_confirm_button_starts_pending_natural_language_action",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_cancel_button_cancels_pending_natural_language_action",
+      "kind": "error",
+      "type": "Error",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_low_confidence_natural_language_asks_for_clarification",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_core_miriam_slash_commands_still_route",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamDevelopmentManagerTest",
+      "test": "test_sprint_plan_command_seeds_and_summarizes_plan",
+      "kind": "error",
+      "type": "Symfony\\Component\\Console\\Exception\\CommandNotFoundException",
+      "category": "blocked-manager-contract"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_slack_event_stores_reminder_and_sends_summary",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_tool_gateway_creates_tomorrow_morning_reminder_and_calendar_safely",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_move_that_to_ambiguous_time_asks_am_pm_using_previous_context",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_mark_it_done_updates_recent_reminder_when_context_is_clear",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_message_jasion_tomorrow_at_nine_asks_am_pm_clarification",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_am_resolves_previous_clarification",
+      "kind": "error",
+      "type": "Illuminate\\Database\\Eloquent\\ModelNotFoundException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_message_jasion_tomorrow_at_nine_creates_reminder",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_message_jasion_tomorrow_at_nine_pm_creates_reminder",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_tonight_prepare_document_creates_document_task",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_tonight_before_eight_defaults_to_nine_pm_today",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_tonight_after_eight_uses_future_rounded_time",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_multi_line_message_creates_multiple_items",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_app_mention_creates_reminder_and_strips_mention_token",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_parse_failure_replies_with_example_format",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_low_confidence_capture_asks_clarification",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_openai_failure_falls_back_gracefully",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_openai_fallback_can_create_reminder_with_audit_events",
+      "kind": "error",
+      "type": "Illuminate\\Database\\Eloquent\\ModelNotFoundException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_google_calendar_event_created_when_connected",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_no_reminder_or_calendar_event_is_created_in_the_past",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    },
+    {
+      "class": "Tests\\Feature\\MiriamReminderTest",
+      "test": "test_medication_reminder_still_posts_private_buttons_to_miriam_channel",
+      "kind": "failure",
+      "type": "PHPUnit\\Framework\\ExpectationFailedException",
+      "category": "valid-reminder-regression-needs-contract-review"
+    }
+  ]
+}

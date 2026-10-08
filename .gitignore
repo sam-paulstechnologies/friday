@@ -5,6 +5,8 @@
 /public/storage
 /.local-runtime/
 /test-results/
+/playwright-report/
+__pycache__/
 /exports/
 /storage/*.key
 /storage/pail

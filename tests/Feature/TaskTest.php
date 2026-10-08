@@ -2,10 +2,9 @@
 
 namespace Tests\Feature;
 
-use App\Models\Project;
 use App\Models\Label;
+use App\Models\Project;
 use App\Models\Task;
-use App\Models\TaskActivity;
 use App\Models\TaskAttachment;
 use App\Models\TaskComment;
 use App\Models\Team;
@@ -19,6 +18,13 @@ use Tests\TestCase;
 class TaskTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // These relative-date fixtures need a fixed instant shared by UTC and Dubai.
+        $this->travelTo('2026-10-08 08:00:00 UTC');
+    }
 
     public function test_my_tasks_page_loads(): void
     {
