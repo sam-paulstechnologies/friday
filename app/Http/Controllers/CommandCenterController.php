@@ -2,10 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Area;
-use App\Models\Portfolio;
-use App\Models\Project;
-use App\Models\Task;
+use App\Services\Authorization\CommandCenterAccessService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -14,6 +11,8 @@ use Inertia\Response;
 
 abstract class CommandCenterController extends Controller
 {
+    public function __construct(protected readonly CommandCenterAccessService $access) {}
+
     abstract protected function modelClass(): string;
 
     abstract protected function page(): string;
@@ -38,34 +37,30 @@ abstract class CommandCenterController extends Controller
     {
         $modelClass = $this->modelClass();
 
-        $relations = ['area:id,name', 'portfolio:id,name', 'project:id,name'];
+        $relations = ['area:id,name', 'portfolio:id,name,workspace_id', 'project:id,name,workspace_id,owner_id'];
 
         if (method_exists($modelClass, 'task')) {
-            $relations[] = 'task:id,title';
+            $relations[] = 'task:id,title,workspace_id,assignee_id,reporter_id';
         }
 
         $items = $modelClass::query()
             ->with($relations)
             ->where('user_id', $request->user()->id)
-            ->orderByRaw("status = ? desc", [$this->openStatus()])
+            ->orderByRaw('status = ? desc', [$this->openStatus()])
             ->latest()
             ->get()
-            ->map(fn (Model $item) => $this->itemResource($item));
+            ->map(fn (Model $item) => $this->itemResource($this->access->redactInaccessibleRelations($request->user(), $item)));
 
         return Inertia::render($this->page(), [
             'items' => $items,
             'openStatus' => $this->openStatus(),
-            'options' => [
-                'areas' => Area::query()->select(['id', 'name'])->orderBy('position')->get(),
-                'portfolios' => Portfolio::query()->select(['id', 'area_id', 'name'])->orderBy('name')->get(),
-                'projects' => Project::query()->select(['id', 'area_id', 'portfolio_id', 'name'])->orderBy('name')->get(),
-                'tasks' => Task::query()->select(['id', 'area_id', 'portfolio_id', 'project_id', 'title'])->active()->orderBy('title')->limit(200)->get(),
-            ],
+            'options' => $this->access->options($request->user()),
         ]);
     }
 
     public function store(Request $request)
     {
+        $this->access->authorizeWrite($request->user());
         $data = $this->validatedData($request);
         $data['user_id'] = $request->user()->id;
 
@@ -79,19 +74,23 @@ abstract class CommandCenterController extends Controller
 
     protected function updateItem(Request $request, Model $item)
     {
-        abort_unless($item->user_id === $request->user()->id, 403);
+        $this->access->authorizeWrite($request->user(), $item);
 
-        $item->update($this->validatedData($request));
+        $data = $this->validatedData($request);
+        $this->access->validateRelations($request->user(), array_merge($item->only(['area_id', 'portfolio_id', 'project_id', 'task_id']), $data));
+        $item->update($data);
 
         return back()->with('success', 'Item updated.');
     }
 
     protected function closeItem(Request $request, Model $item)
     {
-        abort_unless($item->user_id === $request->user()->id, 403);
+        $this->access->authorizeWrite($request->user(), $item);
 
+        $this->access->validateRelations($request->user(), $item->only(['area_id', 'portfolio_id', 'project_id', 'task_id']));
+        $request->validate(['status' => ['sometimes', Rule::in([$this->closedStatus()])]]);
         $item->update([
-            'status' => $request->input('status', $this->closedStatus()),
+            'status' => $this->closedStatus(),
             $this->closedTimestampColumn() => now(),
         ]);
 
@@ -100,15 +99,18 @@ abstract class CommandCenterController extends Controller
 
     protected function validatedData(Request $request): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'area_id' => ['nullable', 'integer', Rule::exists('areas', 'id')],
-            'portfolio_id' => ['nullable', 'integer', Rule::exists('portfolios', 'id')],
-            'project_id' => ['nullable', 'integer', Rule::exists('projects', 'id')],
-            'task_id' => ['nullable', 'integer', Rule::exists('tasks', 'id')],
+            'portfolio_id' => ['nullable', 'integer'],
+            'project_id' => ['nullable', 'integer'],
+            'task_id' => ['nullable', 'integer'],
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             ...$this->extraValidation(),
         ]);
+        $this->access->validateRelations($request->user(), $data);
+
+        return $data;
     }
 
     protected function itemResource(Model $item): array
