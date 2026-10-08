@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use App\Models\Workspace;
 use App\Services\Inbox\InboxService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Inertia\Middleware;
 
 class HandleInertiaRequests extends Middleware
@@ -35,6 +36,7 @@ class HandleInertiaRequests extends Middleware
             ...parent::share($request),
             'auth' => [
                 'user' => $request->user(),
+                'can_manage_global_ai' => $request->user() ? Gate::forUser($request->user())->allows('manageGlobalAiSettings') : false,
             ],
             'notifications' => [
                 'unread_count' => $request->user()?->unreadNotifications()->count() ?? 0,

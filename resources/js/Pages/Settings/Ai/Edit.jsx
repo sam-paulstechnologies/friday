@@ -1,6 +1,6 @@
 import { inputClass, primaryButton, secondaryButton } from '@/Components/Ui';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import { Head, router, useForm, usePage } from '@inertiajs/react';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 
 function FieldError({ message }) {
     if (!message) {
@@ -10,7 +10,7 @@ function FieldError({ message }) {
     return <p className="mt-1 text-sm font-medium text-rose-600">{message}</p>;
 }
 
-export default function Edit({ settings, modelOptions }) {
+export default function Edit({ settings, modelOptions, passwordConfirmationRequired }) {
     const flash = usePage().props.flash ?? {};
     const { data, setData, patch, processing, errors, reset } = useForm({
         api_key: '',
@@ -77,6 +77,13 @@ export default function Edit({ settings, modelOptions }) {
                         </div>
                     )}
 
+                    {passwordConfirmationRequired && (
+                        <p className="mx-5 mt-5 text-sm text-slate-700">
+                            <Link href={route('password.confirm')} className="font-semibold underline">
+                                Confirm your password
+                            </Link> before entering a key, saving settings or testing the connection.
+                        </p>
+                    )}
                     <form onSubmit={submit} className="space-y-6 p-5">
                         <div className="grid gap-5 lg:grid-cols-[1fr_280px]">
                             <label className="block">

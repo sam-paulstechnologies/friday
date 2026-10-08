@@ -7,7 +7,9 @@ use App\Models\AiSetting;
 use App\Services\Ai\AiSettingsService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -15,11 +17,13 @@ use Inertia\Response;
 
 class AiSettingsController extends Controller
 {
-    public function edit(AiSettingsService $settings): Response
+    public function edit(Request $request, AiSettingsService $settings): Response
     {
+        Gate::authorize('manageGlobalAiSettings');
         $aiSetting = $this->setting();
 
         return Inertia::render('Settings/Ai/Edit', [
+            'passwordConfirmationRequired' => ! $this->recentlyConfirmed($request),
             'settings' => [
                 'api_key_mask' => $aiSetting?->maskedApiKey(),
                 'has_api_key' => filled($aiSetting?->encrypted_api_key),
@@ -40,6 +44,8 @@ class AiSettingsController extends Controller
 
     public function update(Request $request, AiSettingsService $settings): RedirectResponse
     {
+        Gate::authorize('manageGlobalAiSettings');
+        abort_unless($this->recentlyConfirmed($request), 423, 'Password confirmation required.');
         $validator = Validator::make($request->all(), [
             'api_key' => ['nullable', 'string', 'max:500'],
             'default_model' => ['required', Rule::in(AiSetting::MODELS)],
@@ -51,7 +57,7 @@ class AiSettingsController extends Controller
         ]);
 
         if ($validator->fails()) {
-            return back(303)->withErrors($validator)->withInput($request->except('api_key'));
+            return back(303)->withErrors($validator)->withInput([]);
         }
 
         $data = $validator->validated();
@@ -81,6 +87,14 @@ class AiSettingsController extends Controller
         ]);
 
         $aiSetting->save();
+        Log::info('global_ai_settings.updated', [
+            'actor_id' => $request->user()->id,
+            'auditable_type' => AiSetting::class,
+            'auditable_id' => $aiSetting->id,
+            'credential_replaced' => filled($apiKey),
+            'default_model' => $aiSetting->default_model,
+            'planner_model' => $aiSetting->planner_model,
+        ]);
 
         return back(303)->with('success', 'AI Brain settings saved.')->withInput([]);
     }
@@ -107,6 +121,14 @@ class AiSettingsController extends Controller
         }
 
         return back(303)->with('success', 'OpenAI connection succeeded.')->withInput([]);
+    }
+
+    private function recentlyConfirmed(Request $request): bool
+    {
+        $confirmedAt = (int) $request->session()->get('auth.password_confirmed_at', 0);
+
+        return $confirmedAt > 0 && $confirmedAt <= time()
+            && time() - $confirmedAt < (int) config('auth.password_timeout', 10800);
     }
 
     private function setting(): ?AiSetting
