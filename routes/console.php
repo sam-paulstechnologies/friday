@@ -12,6 +12,6 @@ Schedule::command('taskflow:send-task-reminders')->daily();
 Schedule::command('taskflow:send-daily-briefing')->dailyAt('08:00');
 Schedule::command('taskflow:send-evening-checkin')->dailyAt('20:00');
 Schedule::command('miriam:run-automations')->everyFifteenMinutes();
-Schedule::command('miriam:sync-google-calendar')->hourly()->when(fn () => (bool) config('services.google_calendar.enabled'));
+Schedule::command('miriam:sync-google-calendar')->hourly()->withoutOverlapping(30)->when(fn () => (bool) config('services.google_calendar.enabled'));
 Schedule::command('miriam:send-medication-reminders')->everyMinute();
 Schedule::command('miriam:send-reminders')->everyMinute();

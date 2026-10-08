@@ -6,6 +6,8 @@ export default function Index({ googleCalendar }) {
     const connection = googleCalendar.connection;
     const connected = Boolean(connection?.connected);
     const ready = googleCalendar.enabled && googleCalendar.configured;
+    const statusLabels = { success: 'Synced', partial: 'Partially synced', failed: 'Sync failed', auth_required: 'Reconnect required', skipped: 'Sync skipped', unverified: 'Sync unverified' };
+    const syncStatus = statusLabels[connection?.health?.sync_state] ?? 'Sync unverified';
 
     const sync = () => router.post(route('settings.integrations.google.sync'), {}, { preserveScroll: true });
     const disconnect = () => router.patch(route('settings.integrations.google.disconnect', connection.id), {}, { preserveScroll: true });
@@ -18,7 +20,7 @@ export default function Index({ googleCalendar }) {
                 <PageSection
                     title="Google Calendar"
                     description="Sync dated Miriam tasks to Google Calendar and show external calendar events in Planner."
-                    action={<Badge tone={connected ? 'bg-emerald-50 text-emerald-700 ring-emerald-100' : 'bg-slate-100 text-slate-700 ring-slate-200'}>{connected ? 'Connected' : 'Not connected'}</Badge>}
+                    action={<Badge tone={connected && connection?.health?.sync_state === 'success' ? 'bg-emerald-50 text-emerald-700 ring-emerald-100' : 'bg-slate-100 text-slate-700 ring-slate-200'}>{connected ? syncStatus : 'Not connected'}</Badge>}
                 >
                     <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
                         <div className="space-y-3 text-sm">
@@ -32,7 +34,8 @@ export default function Index({ googleCalendar }) {
                                 <div className="grid gap-3 md:grid-cols-3">
                                     <Meta label="Account" value={connection.provider_account_email ?? 'Google account'} />
                                     <Meta label="Workspace" value={connection.workspace?.name ?? 'Personal'} />
-                                    <Meta label="Last sync" value={connection.last_synced_at ?? 'Never'} />
+                                    <Meta label="Last verified sync" value={connection.health?.last_successful_sync_at ?? 'Unverified'} />
+                                    <Meta label="Sync status" value={syncStatus} />
                                 </div>
                             ) : (
                                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-slate-600">
@@ -42,9 +45,9 @@ export default function Index({ googleCalendar }) {
                         </div>
 
                         <div className="flex flex-wrap gap-2 lg:justify-end">
-                            {!connected && (
+                            {(!connected || connection.health?.sync_state === 'auth_required') && (
                                 <Link href={route('settings.integrations.google.connect')} className={`${primaryButton} ${!ready ? 'pointer-events-none opacity-50' : ''}`}>
-                                    Connect
+                                    {connected ? 'Reconnect' : 'Connect'}
                                 </Link>
                             )}
                             {connected && (

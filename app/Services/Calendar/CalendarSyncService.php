@@ -14,30 +14,135 @@ use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Throwable;
 
 class CalendarSyncService
 {
-    public function __construct(private readonly GoogleCalendarService $googleCalendarService) {}
+    private ?string $lastErrorCode = null;
+
+    private int $retryAfterSeconds = 0;
+
+    public function __construct(private readonly GoogleCalendarService $googleCalendarService, private readonly CalendarConnectionHealthService $health) {}
 
     public function syncConnection(CalendarConnection $connection): array
     {
-        if (! $this->googleCalendarService->configured()) {
-            $this->log($connection, 'manual', 'skipped', 'Google Calendar is disabled or not configured.');
+        $counts = ['created' => 0, 'updated' => 0, 'failed' => 0, 'skipped' => 0, 'attempted' => 0, 'succeeded' => 0,
+            'outcome' => 'skipped', 'error_code' => null,
+            'authentication' => ['attempted' => 0, 'succeeded' => 0, 'failed' => 0, 'skipped' => 0],
+            'push' => ['attempted' => 0, 'succeeded' => 0, 'failed' => 0, 'skipped' => 0],
+            'pull' => ['attempted' => 0, 'succeeded' => 0, 'failed' => 0, 'skipped' => 0]];
+        if (! $this->googleCalendarService->configured() || ! $connection->is_active) {
+            $counts['skipped'] = 1;
+            $counts['error_code'] = 'not_configured_or_connected';
+            $this->log($connection, 'manual', 'skipped', 'Calendar sync was not attempted.', $counts);
 
-            return ['created' => 0, 'updated' => 0, 'skipped' => 1, 'failed' => 0];
+            return $counts;
         }
+        $blocked = $this->health->blocked($connection);
+        if ($blocked) {
+            $counts['outcome'] = $blocked === 'auth_required' ? 'auth_required' : 'skipped';
+            $counts['error_code'] = $blocked;
+            $counts['skipped'] = 1;
 
-        $counts = ['created' => 0, 'updated' => 0, 'skipped' => 0, 'failed' => 0];
+            return $counts;
+        }
+        $lock = Cache::lock('jarvis:calendar:connection:'.$connection->id, 1800);
+        if (! $lock->get()) {
+            $counts['skipped'] = 1;
+            $counts['error_code'] = 'sync_in_progress';
 
-        $this->eligibleTasks($connection)->each(function (Task $task) use ($connection, &$counts): void {
-            $result = $this->syncTask($connection, $task);
-            $counts[$result]++;
-        });
-
-        $this->pullExternalEvents($connection);
-        $connection->forceFill(['last_synced_at' => now()])->save();
-        $this->log($connection, 'manual', 'success', 'Google Calendar sync completed.', $counts);
+            return $counts;
+        }
+        $this->googleCalendarService->beginRun();
+        $this->lastErrorCode = null;
+        $this->retryAfterSeconds = 0;
+        $stage = 'authentication';
+        $authFailure = false;
+        $started = microtime(true);
+        $eligibleCount = 0;
+        try {
+            $this->health->markAttempted($connection);
+            $eligibleCount = $this->eligibleTaskQuery($connection)->count();
+            $counts[$stage]['attempted']++;
+            $this->googleCalendarService->refreshIfNeeded($connection);
+            $counts[$stage]['succeeded']++;
+            $tasks = $this->eligibleTasks($connection);
+            $failures = 0;
+            foreach ($tasks as $index => $task) {
+                if (! $this->health->credentialsMatch($connection)) {
+                    $this->lastErrorCode = 'connection_changed';
+                    break;
+                }
+                if ($index >= 100 || microtime(true) - $started > 240 || $failures >= 3 || $this->retryAfterSeconds > 0) {
+                    $counts['push']['skipped'] += $tasks->count() - $index;
+                    $this->lastErrorCode ??= 'run_budget_exhausted';
+                    break;
+                }
+                $stage = 'push';
+                $counts[$stage]['attempted']++;
+                $result = $this->syncTask($connection, $task);
+                if ($result === 'failed') {
+                    $counts[$stage]['failed']++;
+                    $failures++;
+                } elseif ($result === 'skipped') {
+                    $counts[$stage]['skipped']++;
+                } else {
+                    $counts[$stage]['succeeded']++;
+                    $counts[$result]++;
+                    $failures = 0;
+                }
+            }
+            if (microtime(true) - $started <= 240 && $this->retryAfterSeconds === 0 && $this->health->credentialsMatch($connection)) {
+                $stage = 'pull';
+                $counts[$stage]['attempted']++;
+                $result = $this->pullExternalEvents($connection);
+                $counts[$stage][$result === 'success' ? 'succeeded' : 'failed']++;
+            } else {
+                $counts['pull']['skipped']++;
+                $this->lastErrorCode ??= 'run_budget_exhausted';
+            }
+        } catch (CalendarProviderException $error) {
+            $counts[$stage]['failed']++;
+            $this->lastErrorCode = $error->errorCode;
+            $this->retryAfterSeconds = max($this->retryAfterSeconds, $error->retryAfterSeconds);
+            $authFailure = $error->authRequired;
+        } catch (Throwable) {
+            $counts[$stage]['failed']++;
+            $this->lastErrorCode = 'sync_failed';
+        } finally {
+            try {
+                $counts['push']['skipped'] += max(0, $eligibleCount - $counts['push']['attempted'] - $counts['push']['skipped']);
+                if ($counts['pull']['attempted'] === 0) {
+                    $counts['pull']['skipped'] = 1;
+                }
+                foreach (['attempted', 'succeeded', 'failed', 'skipped'] as $key) {
+                    $counts[$key] = $counts['authentication'][$key] + $counts['push'][$key] + $counts['pull'][$key];
+                }
+                $dataSucceeded = $counts['push']['succeeded'] + $counts['pull']['succeeded'];
+                $counts['outcome'] = $authFailure ? 'auth_required'
+                    : ($counts['failed'] > 0 || $counts['skipped'] > 0 ? ($dataSucceeded > 0 ? 'partial' : 'failed')
+                        : ($dataSucceeded > 0 ? 'success' : 'skipped'));
+                $counts['error_code'] = $this->lastErrorCode;
+                if (! $this->health->credentialsMatch($connection)) {
+                    $counts['outcome'] = $dataSucceeded > 0 ? 'partial' : 'skipped';
+                    $counts['error_code'] = 'connection_changed';
+                    $current = $connection->fresh();
+                    if ($current?->is_active && $this->health->state($current)['sync_state'] !== 'auth_required') {
+                        $this->health->record($current, $counts['outcome'], 'connection_changed');
+                    }
+                    if ($current) {
+                        $this->log($current, 'manual', $counts['outcome'], 'Connection changed during sync.', $counts);
+                    }
+                } else {
+                    $this->health->record($connection, $counts['outcome'], $this->lastErrorCode, $this->retryAfterSeconds);
+                    $this->log($connection, 'manual', $counts['outcome'], 'Calendar sync outcome: '.$counts['outcome'].'.', $counts);
+                }
+            } finally {
+                $this->googleCalendarService->endRun();
+                $lock->release();
+            }
+        }
 
         return $counts;
     }
@@ -79,7 +184,12 @@ class CalendarSyncService
 
             return $created ? 'created' : 'updated';
         } catch (Throwable $exception) {
-            $this->log($connection, 'push', 'failed', $exception->getMessage(), ['task_id' => $task->id]);
+            if ($exception instanceof CalendarProviderException && $exception->authRequired) {
+                throw $exception;
+            }
+            $this->retryAfterSeconds = max($this->retryAfterSeconds, $exception instanceof CalendarProviderException ? $exception->retryAfterSeconds : 0);
+            $this->lastErrorCode = $exception instanceof CalendarProviderException ? $exception->errorCode : 'task_push_failed';
+            $this->log($connection, 'push', 'failed', 'Calendar task push failed.', ['task_id' => $task->id, 'error_code' => $this->lastErrorCode]);
 
             return 'failed';
         }
@@ -88,7 +198,7 @@ class CalendarSyncService
     public function syncMedicationReminder(MedicationDoseLog $log): array
     {
         if (! $this->googleCalendarService->configured()) {
-            return ['status' => 'skipped', 'reason' => 'not_configured'];
+            return ['status' => 'skipped', 'outcome' => 'skipped', 'reason' => 'not_configured'];
         }
 
         $connection = CalendarConnection::query()
@@ -99,15 +209,11 @@ class CalendarSyncService
             ->first();
 
         if (! $connection) {
-            return ['status' => 'skipped', 'reason' => 'not_connected'];
+            return ['status' => 'skipped', 'outcome' => 'skipped', 'reason' => 'not_connected'];
         }
 
-        if (blank($connection->access_token)) {
-            return ['status' => 'skipped', 'reason' => 'missing_access_token'];
-        }
-
-        if ($connection->token_expires_at && $connection->token_expires_at->isPast() && blank($connection->refresh_token)) {
-            return ['status' => 'skipped', 'reason' => 'expired_without_refresh_token'];
+        if ($blocked = $this->health->blocked($connection)) {
+            return ['status' => $blocked === 'auth_required' ? 'auth_required' : 'skipped', 'outcome' => $blocked === 'auth_required' ? 'auth_required' : 'skipped', 'reason' => $blocked];
         }
 
         $existingProviderEventId = $this->existingMedicationProviderEventId($log);
@@ -137,11 +243,18 @@ class CalendarSyncService
 
             return [
                 'status' => $existingProviderEventId ? 'updated' : 'created',
+                'outcome' => 'success',
                 'provider_event_id' => $event['id'],
             ];
+        } catch (CalendarProviderException $exception) {
+            $outcome = $exception->authRequired ? 'auth_required' : 'failed';
+            $this->health->record($connection, $outcome, $exception->errorCode, $exception->retryAfterSeconds);
+
+            return ['status' => $outcome, 'outcome' => $outcome, 'reason' => $exception->errorCode];
         } catch (Throwable $exception) {
             return [
                 'status' => 'failed',
+                'outcome' => 'failed',
                 'reason' => 'exception',
                 'exception' => class_basename($exception),
             ];
@@ -151,11 +264,11 @@ class CalendarSyncService
     public function syncMiriamReminder(MiriamReminder $reminder): array
     {
         if (! $this->googleCalendarService->configured()) {
-            return ['status' => 'skipped', 'reason' => 'not_configured'];
+            return ['status' => 'skipped', 'outcome' => 'skipped', 'reason' => 'not_configured'];
         }
 
         if (! $reminder->user_id || ! $reminder->due_at) {
-            return ['status' => 'skipped', 'reason' => 'missing_user_or_time'];
+            return ['status' => 'skipped', 'outcome' => 'skipped', 'reason' => 'missing_user_or_time'];
         }
 
         $connection = CalendarConnection::query()
@@ -166,7 +279,11 @@ class CalendarSyncService
             ->first();
 
         if (! $connection) {
-            return ['status' => 'skipped', 'reason' => 'not_connected'];
+            return ['status' => 'skipped', 'outcome' => 'skipped', 'reason' => 'not_connected'];
+        }
+
+        if ($blocked = $this->health->blocked($connection)) {
+            return ['status' => $blocked === 'auth_required' ? 'auth_required' : 'skipped', 'outcome' => $blocked === 'auth_required' ? 'auth_required' : 'skipped', 'reason' => $blocked];
         }
 
         try {
@@ -201,8 +318,16 @@ class CalendarSyncService
 
             return [
                 'status' => $reminder->wasChanged('google_calendar_event_id') ? 'created' : 'updated',
+                'outcome' => 'success',
                 'provider_event_id' => $event['id'] ?? null,
             ];
+        } catch (CalendarProviderException $exception) {
+            $outcome = $exception->authRequired ? 'auth_required' : 'failed';
+            $this->health->record($connection, $outcome, $exception->errorCode, $exception->retryAfterSeconds);
+            $reminder->events()->create(['event_type' => 'calendar_event_failed', 'channel' => 'google_calendar',
+                'occurred_at' => CarbonImmutable::now('UTC'), 'metadata' => ['outcome' => $outcome, 'error_code' => $exception->errorCode]]);
+
+            return ['status' => $outcome, 'outcome' => $outcome, 'reason' => $exception->errorCode];
         } catch (Throwable $exception) {
             $reminder->events()->create([
                 'event_type' => 'calendar_event_failed',
@@ -211,7 +336,7 @@ class CalendarSyncService
                 'metadata' => ['exception' => class_basename($exception)],
             ]);
 
-            return ['status' => 'failed', 'reason' => 'exception', 'exception' => class_basename($exception)];
+            return ['status' => 'failed', 'outcome' => 'failed', 'reason' => 'exception', 'exception' => class_basename($exception)];
         }
     }
 
@@ -249,38 +374,49 @@ class CalendarSyncService
             ->all();
     }
 
-    private function pullExternalEvents(CalendarConnection $connection): void
+    private function pullExternalEvents(CalendarConnection $connection): string
     {
         try {
             $items = $this->googleCalendarService->pullEvents($connection, now()->startOfMonth(), now()->endOfMonth());
-        } catch (Throwable $exception) {
-            $this->log($connection, 'pull', 'failed', $exception->getMessage());
+            collect($items)
+                ->reject(fn (array $event) => isset($event['extendedProperties']['private']['miriam_task_id']))
+                ->each(function (array $event) use ($connection): void {
+                    if (blank($event['id'] ?? null)) {
+                        return;
+                    }
 
-            return;
+                    CalendarEventMapping::updateOrCreate(
+                        [
+                            'user_id' => $connection->user_id,
+                            'provider' => 'google',
+                            'provider_event_id' => $event['id'],
+                        ],
+                        [
+                            'task_id' => null,
+                            'project_id' => null,
+                            'provider_calendar_id' => $event['organizer']['email'] ?? 'primary',
+                            'last_synced_at' => now(),
+                            'metadata' => $this->safeEventMetadata($event, ['source' => 'google_external']),
+                        ],
+                    );
+                });
+
+            return 'success';
+        } catch (CalendarProviderException $error) {
+            if ($error->authRequired) {
+                throw $error;
+            }
+            $this->lastErrorCode = $error->errorCode;
+            $this->retryAfterSeconds = max($this->retryAfterSeconds, $error->retryAfterSeconds);
+            $this->log($connection, 'pull', 'failed', 'Calendar read failed.', ['error_code' => $error->errorCode]);
+
+            return 'failed';
+        } catch (Throwable) {
+            $this->lastErrorCode = 'calendar_read_failed';
+            $this->log($connection, 'pull', 'failed', 'Calendar read failed.');
+
+            return 'failed';
         }
-
-        collect($items)
-            ->reject(fn (array $event) => isset($event['extendedProperties']['private']['miriam_task_id']))
-            ->each(function (array $event) use ($connection): void {
-                if (blank($event['id'] ?? null)) {
-                    return;
-                }
-
-                CalendarEventMapping::updateOrCreate(
-                    [
-                        'user_id' => $connection->user_id,
-                        'provider' => 'google',
-                        'provider_event_id' => $event['id'],
-                    ],
-                    [
-                        'task_id' => null,
-                        'project_id' => null,
-                        'provider_calendar_id' => $event['organizer']['email'] ?? 'primary',
-                        'last_synced_at' => now(),
-                        'metadata' => $this->safeEventMetadata($event, ['source' => 'google_external']),
-                    ],
-                );
-            });
     }
 
     private function existingMedicationProviderEventId(MedicationDoseLog $log): ?string
@@ -295,6 +431,11 @@ class CalendarSyncService
     }
 
     private function eligibleTasks(CalendarConnection $connection): Collection
+    {
+        return $this->eligibleTaskQuery($connection)->limit(100)->get();
+    }
+
+    private function eligibleTaskQuery(CalendarConnection $connection): Builder
     {
         $workspaceIds = $connection->user->accessibleWorkspaceIds();
 
@@ -314,9 +455,7 @@ class CalendarSyncService
                     ->orWhereNotNull('start_date');
             })
             ->whereNotIn('status', ['completed', 'archived'])
-            ->orderBy('due_date')
-            ->limit(100)
-            ->get();
+            ->orderBy('due_date');
     }
 
     private function taskIsEligibleForConnection(CalendarConnection $connection, Task $task): bool

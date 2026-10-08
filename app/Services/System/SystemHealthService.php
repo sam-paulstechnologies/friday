@@ -2,6 +2,8 @@
 
 namespace App\Services\System;
 
+use App\Models\CalendarConnection;
+use App\Services\Calendar\CalendarConnectionHealthService;
 use Illuminate\Contracts\Console\Kernel as ConsoleKernel;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -195,10 +197,33 @@ class SystemHealthService
             return $this->warning('Google Calendar', 'Google Calendar is enabled but OAuth configuration is incomplete.');
         }
 
-        return $this->pass('Google Calendar', $configured ? 'Google Calendar is enabled and configured.' : 'Google Calendar is disabled or not configured.', [
-            'enabled' => $enabled,
-            'configured' => $configured,
-        ]);
+        if (! $configured) {
+            return $this->warning('Google Calendar', 'Calendar is disabled; provider success is unverified.');
+        }
+        try {
+            $connections = CalendarConnection::query()->where('provider', 'google')->where('is_active', true)->get(['id']);
+            if ($connections->isEmpty()) {
+                return $this->warning('Google Calendar', 'OAuth is configured, but no active connection is verified.');
+            }
+            $unverified = false;
+            foreach ($connections as $connection) {
+                $state = app(CalendarConnectionHealthService::class)->state($connection);
+                if (in_array($state['sync_state'], ['failed', 'auth_required'], true)) {
+                    return $this->fail('Google Calendar', 'Calendar sync failed or requires reconnection.');
+                }
+                if ($state['sync_state'] !== 'success' || ! $state['last_successful_sync_at']
+                    || now()->diffInHours($state['last_successful_sync_at'], true) > 24) {
+                    $unverified = true;
+                }
+            }
+            if ($unverified) {
+                return $this->warning('Google Calendar', 'Calendar sync is partial, skipped, stale or unverified.');
+            }
+        } catch (Throwable) {
+            return $this->warning('Google Calendar', 'Provider health could not be verified.');
+        }
+
+        return $this->pass('Google Calendar', 'All active connections have a recent verified successful sync.');
     }
 
     private function checkAiConfig(): array
