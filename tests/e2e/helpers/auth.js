@@ -5,7 +5,9 @@ export function credentialsAvailable() {
 }
 
 export function skipIfMissingCredentials() {
-    test.skip(!credentialsAvailable(), 'Set PLAYWRIGHT_USER_EMAIL and PLAYWRIGHT_USER_PASSWORD to run authenticated UAT smoke tests.');
+    if (!credentialsAvailable()) {
+        throw new Error('Synthetic credentials are required; authenticated contracts cannot silently skip.');
+    }
 }
 
 export async function login(page) {
@@ -20,7 +22,8 @@ export async function login(page) {
     await page.getByLabel(/Email/i).fill(email);
     await page.getByLabel('Password').fill(password);
     await page.getByRole('button', { name: /Log ?in|Login/i }).click();
-    await expect(page.getByTestId('dashboard-page')).toBeVisible();
+    await expect(page).toHaveURL(/\/today$/);
+    await expect(page.getByRole('heading', { name: 'Priority work', exact: true })).toBeVisible();
 }
 
 export async function loginAndVisit(page, url, testId) {

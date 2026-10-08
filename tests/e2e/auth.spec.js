@@ -12,8 +12,7 @@ test('authenticated login works when credentials are provided', async ({ page })
     skipIfMissingCredentials();
 
     await login(page);
-    await expect(page.getByTestId('dashboard-page')).toBeVisible();
-    await expect(page).toHaveURL(/dashboard/);
+    await expect(page).toHaveURL(/\/today$/);
 });
 
 test('credentials are supplied through environment only', async () => {

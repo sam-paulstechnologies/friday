@@ -1,32 +1,34 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:8000';
-const shouldStartServer = process.env.PLAYWRIGHT_START_SERVER !== 'false';
+const baseURL = 'http://127.0.0.1:8765';
+if (process.env.PLAYWRIGHT_BASE_URL && process.env.PLAYWRIGHT_BASE_URL !== baseURL) {
+    throw new Error('E2E is restricted to the disposable loopback server.');
+}
 
 export default defineConfig({
     testDir: './tests/e2e',
+    outputDir: './test-results/playwright',
     timeout: 30_000,
     expect: {
         timeout: 10_000,
     },
     fullyParallel: false,
+    workers: 1,
     forbidOnly: !!process.env.CI,
-    retries: process.env.CI ? 1 : 0,
-    reporter: [['list'], ['html', { open: 'never' }]],
+    retries: 0,
+    reporter: [['list'], ['html', { open: 'never' }], ['junit', { outputFile: 'test-results/e2e-junit.xml' }]],
     use: {
         baseURL,
         screenshot: 'only-on-failure',
         trace: 'retain-on-failure',
         video: 'retain-on-failure',
     },
-    webServer: shouldStartServer
-        ? {
-            command: 'php artisan serve --host=127.0.0.1 --port=8000',
+    webServer: {
+            command: 'php -S 127.0.0.1:8765 -t public tools/testing/e2e-router.php',
             url: baseURL,
-            reuseExistingServer: true,
+            reuseExistingServer: false,
             timeout: 60_000,
-        }
-        : undefined,
+        },
     projects: [
         {
             name: 'desktop-chromium',
