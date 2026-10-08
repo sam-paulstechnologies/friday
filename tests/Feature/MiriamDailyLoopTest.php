@@ -7,12 +7,15 @@ use App\Models\Project;
 use App\Models\Task;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Services\Inbox\InboxService;
+use App\Services\Tasks\InvalidTaskTransitionException;
 use App\Services\Tasks\TaskTransitionService;
 use App\Support\OperationalClock;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Route;
 use Inertia\Testing\AssertableInertia;
 use Tests\TestCase;
 
@@ -71,7 +74,7 @@ class MiriamDailyLoopTest extends TestCase
             ->assertOk()
             ->assertJson(['status' => 'needs_confirmation']);
 
-        $inbox = app(\App\Services\Inbox\InboxService::class)->items($this->user);
+        $inbox = app(InboxService::class)->items($this->user);
 
         $this->assertCount(1, $inbox['open']);
         $this->assertSame('unprocessed', $inbox['open'][0]['state']);
@@ -89,7 +92,7 @@ class MiriamDailyLoopTest extends TestCase
             ->assertJson(['ignored' => 'duplicate_event']);
 
         $this->assertDatabaseCount('miriam_reminders', 1);
-        $this->assertCount(1, app(\App\Services\Inbox\InboxService::class)->items($this->user)['open']);
+        $this->assertCount(1, app(InboxService::class)->items($this->user)['open']);
     }
 
     public function test_inbox_page_displays_the_capture(): void
@@ -169,7 +172,7 @@ class MiriamDailyLoopTest extends TestCase
         $this->actingAs($this->user)
             ->post(route('inbox.convert', ['capture', $reminder->id]), ['destination' => TaskTransitionService::MOVE_TASKS]);
 
-        $inbox = app(\App\Services\Inbox\InboxService::class)->items($this->user);
+        $inbox = app(InboxService::class)->items($this->user);
 
         $this->assertSame(0, $inbox['counts']['open']);
         $this->assertSame(1, $inbox['counts']['converted']);
@@ -412,7 +415,7 @@ class MiriamDailyLoopTest extends TestCase
         $task = $this->task(['due_date' => '2026-06-23']);
 
         // Reopening something that was never closed is not a legal move.
-        $this->expectException(\App\Services\Tasks\InvalidTaskTransitionException::class);
+        $this->expectException(InvalidTaskTransitionException::class);
 
         app(TaskTransitionService::class)->apply($task, TaskTransitionService::REOPEN, $this->user);
     }
@@ -481,8 +484,8 @@ class MiriamDailyLoopTest extends TestCase
     public function test_the_removed_bulk_prioritization_endpoint_no_longer_exists(): void
     {
         // It bulk-updated any task id with no ownership check and had no page.
-        $this->assertFalse(\Illuminate\Support\Facades\Route::has('prioritization-review.apply'));
-        $this->assertFalse(\Illuminate\Support\Facades\Route::has('prioritization-review.index'));
+        $this->assertFalse(Route::has('prioritization-review.apply'));
+        $this->assertFalse(Route::has('prioritization-review.index'));
 
         $this->actingAs($this->user)
             ->patch('/prioritization-review/apply', ['task_ids' => [1], 'status' => 'archived', 'confirmation' => 1])
@@ -675,13 +678,19 @@ class MiriamDailyLoopTest extends TestCase
             'templates.index',
         ];
 
+        config(['security.platform_admin_user_ids' => []]);
         foreach ($routes as $name) {
-            $this->assertTrue(\Illuminate\Support\Facades\Route::has($name), "Route [{$name}] is missing.");
+            $this->assertTrue(Route::has($name), "Route [{$name}] is missing.");
 
-            $this->actingAs($this->user)
-                ->get(route($name))
-                ->assertSuccessful();
+            $response = $this->actingAs($this->user)->get(route($name));
+            if ($name === 'settings.ai.edit') {
+                $response->assertForbidden();
+            } else {
+                $response->assertSuccessful();
+            }
         }
+        config(['security.platform_admin_user_ids' => [$this->user->id]]);
+        $this->actingAs($this->user)->get(route('settings.ai.edit'))->assertSuccessful();
     }
 
     public function test_today_reports_codex_as_unavailable_rather_than_idle(): void

@@ -14,4 +14,6 @@ Final results: 30 passed, 0 failed/errors/skipped, 120 assertions. New authoriza
 
 Earlier expanded run: 29 passed / 1 error caused by the new fixture mistakenly requesting a nonexistent WorkspaceFactory. The fixture now creates its synthetic workspace explicitly; the complete rerun passed. No tests were suppressed.
 
+Integrated verification exposed two obsolete owner-navigation assertions expecting global AI settings to return 200 for workspace owners. MiriamDailyLoopTest and MiriamRedesignTest now explicitly verify owner 403 and designated platform-administrator success while retaining every route check. Expanded final command adds both classes to the filter above: **91 passed, 0 failed/errors/skipped, 773 assertions**. Pint passed. These additional 61 navigation/daily-loop regressions are included in the final package results; the earlier 30-case settings/authentication run remains valid.
+
 Security/deployment review: no migration, provider call, credential provisioning, production operation or privilege inferred from enrollment. Requires review, integrated CI and explicit release approval. Configuration starts with zero administrators, deliberately blocking global settings until an operator designates them. Wider registration/verification and global-audit schema decisions remain outstanding.
