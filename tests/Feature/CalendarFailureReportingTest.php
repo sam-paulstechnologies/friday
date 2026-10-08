@@ -462,6 +462,34 @@ class CalendarFailureReportingTest extends TestCase
         $this->assertNull(app(CalendarConnectionHealthService::class)->state($connection)['last_successful_sync_at']);
     }
 
+    public function test_running_sync_is_unverified_even_with_prior_success(): void
+    {
+        $connection = $this->connection();
+        $health = app(CalendarConnectionHealthService::class);
+        $health->record($connection, 'success');
+        Http::fake(function () use ($connection, $health) {
+            $this->assertSame('unverified', $health->state($connection)['sync_state']);
+            $this->assertNotNull($health->state($connection)['last_attempted_at']);
+
+            return Http::response(['items' => []]);
+        });
+        $this->assertSame('success', $this->sync($connection)['outcome']);
+    }
+
+    public function test_stale_health_writes_cannot_verify_rotated_credentials(): void
+    {
+        $connection = $this->connection();
+        $health = app(CalendarConnectionHealthService::class);
+        $oldKey = $health->key($connection);
+        $current = $connection->fresh();
+        $current->forceFill(['access_token' => 'fixture-new-epoch'])->save();
+        $health->reset($current);
+        Cache::forever($oldKey, ['sync_state' => 'success', 'last_successful_sync_at' => now()->toIso8601String()]);
+        $this->assertNotSame($oldKey, $health->key($current));
+        $this->assertSame('unverified', $health->state($current)['sync_state']);
+        $this->assertNull($health->state($current)['last_successful_sync_at']);
+    }
+
     private function connection(array $overrides = []): CalendarConnection
     {
         $user = User::factory()->create();

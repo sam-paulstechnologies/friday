@@ -62,6 +62,7 @@ class CalendarSyncService
         $started = microtime(true);
         $eligibleCount = 0;
         try {
+            $this->health->markAttempted($connection);
             $eligibleCount = $this->eligibleTaskQuery($connection)->count();
             $counts[$stage]['attempted']++;
             $this->googleCalendarService->refreshIfNeeded($connection);

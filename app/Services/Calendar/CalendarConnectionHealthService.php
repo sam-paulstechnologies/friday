@@ -13,8 +13,10 @@ class CalendarConnectionHealthService
 
     public function state(CalendarConnection $connection): array
     {
-        $stored = Schema::hasColumns('calendar_connections', self::FIELDS)
-            ? $connection->fresh()->only(self::FIELDS) : Cache::get($this->key($connection), []);
+        $current = $connection->fresh();
+        $cached = $current ? Cache::get($this->key($current)) : null;
+        $stored = is_array($cached) ? $cached : ($current && Schema::hasColumns('calendar_connections', self::FIELDS)
+            ? $current->only(self::FIELDS) : []);
 
         $stored = array_intersect_key(is_array($stored) ? $stored : [], array_fill_keys(self::FIELDS, true));
         $state = array_merge([
@@ -34,6 +36,12 @@ class CalendarConnectionHealthService
         }
         $state['consecutive_failures'] = is_numeric($state['consecutive_failures']) ? min(100, max(0, (int) $state['consecutive_failures'])) : 0;
         $state['last_error_code'] = $this->safeCode($state['last_error_code']);
+        if (! is_array($cached)) {
+            $state['last_successful_sync_at'] = null;
+            if ($state['sync_state'] === 'success') {
+                $state['sync_state'] = 'unverified';
+            }
+        }
         if ($state['sync_state'] === 'success' && (! $state['last_successful_sync_at']
             || now()->lt($state['last_successful_sync_at']))) {
             $state['sync_state'] = 'unverified';
@@ -85,6 +93,21 @@ class CalendarConnectionHealthService
         }
     }
 
+    public function markAttempted(CalendarConnection $connection): void
+    {
+        if (! $this->credentialsMatch($connection)) {
+            return;
+        }
+        $state = $this->state($connection);
+        $state['last_attempted_at'] = now()->toIso8601String();
+        $state['sync_state'] = 'unverified';
+        // Preserve failure/backoff counters and historical success while work is in flight.
+        Cache::forever($this->key($connection), $state);
+        if (Schema::hasColumns('calendar_connections', self::FIELDS)) {
+            $connection->forceFill($state)->save();
+        }
+    }
+
     public function reset(CalendarConnection $connection): void
     {
         $this->record($connection, 'unverified');
@@ -92,7 +115,16 @@ class CalendarConnectionHealthService
 
     public function key(CalendarConnection $connection): string
     {
-        return 'jarvis:calendar:health:'.$connection->id;
+        $version = [];
+        foreach (['access_token', 'refresh_token', 'provider', 'provider_account_email'] as $field) {
+            $version[$field] = (string) $connection->getRawOriginal($field);
+        }
+        $version['active'] = (bool) $connection->getRawOriginal('is_active');
+        $version['user_id'] = (int) $connection->user_id;
+        $version['workspace_id'] = (int) $connection->workspace_id;
+
+        // Separate credential epochs atomically; a stale cache write cannot validate a reconnect.
+        return 'jarvis:calendar:health:'.$connection->id.':'.hash('sha256', json_encode($version));
     }
 
     public function credentialsMatch(CalendarConnection $connection): bool
