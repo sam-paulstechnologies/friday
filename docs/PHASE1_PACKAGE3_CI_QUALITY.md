@@ -2,7 +2,7 @@
 
 Branch: codex/jarvis-p3-ci-quality; base 78527ef4a00ab8bd906f0514bbe86ff5a0b0aa87.
 
-C1 is implemented: main/feature pushes, all PRs and merge groups trigger validation. Immutable action commits were resolved from upstream tag refs. Read-only contents permission, timeouts, independent PHP 8.2/8.3/8.4 results, frontend build, disposable MySQL 8.0 compatibility, seeded desktop/mobile E2E and sanitized JUnit/JSON artifacts are included. There is no deployment job, provider credential or privileged pull_request_target workflow.
+C1 is implemented: main/feature pushes, all PRs and merge groups trigger validation. Immutable action commits were resolved from upstream tag refs. Read-only contents permission, timeouts, independent PHP 8.2/8.3/8.4 results, frontend build, disposable MySQL 8.0 compatibility, seeded desktop/mobile E2E and sanitized JUnit/JSON artifacts are included. The new Tests workflow has no deployment job, provider credential or privileged pull_request_target event; pre-existing Laravel housekeeping workflows are separate.
 
 The stable check is **JARVIS required checks**. It runs with always()/needs and passes only when exactly php, mysql, frontend and e2e each actually succeeded. Failure, cancellation, skipped/missing jobs and unknown results fail. Configure main protection to require this check, PR review and no bypass through a separately approved repository-policy change. Current authenticated API inspection: no main protection (404), rulesets empty; existing account has administrator permission. Live policy was not changed.
 
