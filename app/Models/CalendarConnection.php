@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Database\Factories\CalendarConnectionFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -9,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class CalendarConnection extends Model
 {
-    /** @use HasFactory<\Database\Factories\CalendarConnectionFactory> */
+    /** @use HasFactory<CalendarConnectionFactory> */
     use HasFactory;
 
     protected $fillable = [
@@ -39,6 +40,10 @@ class CalendarConnection extends Model
             'scopes' => 'array',
             'is_active' => 'boolean',
             'last_synced_at' => 'datetime',
+            'last_attempted_at' => 'datetime',
+            'last_successful_sync_at' => 'datetime',
+            'next_retry_at' => 'datetime',
+            'consecutive_failures' => 'integer',
         ];
     }
 

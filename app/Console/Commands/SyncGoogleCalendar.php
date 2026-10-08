@@ -31,8 +31,14 @@ class SyncGoogleCalendar extends Command
 
         $totals = ['connections' => $connections->count(), 'created' => 0, 'updated' => 0, 'skipped' => 0, 'failed' => 0];
 
-        $connections->each(function (CalendarConnection $connection) use ($calendarSyncService, &$totals): void {
-            $counts = $calendarSyncService->syncConnection($connection);
+        $hasFailure = false;
+        $connections->each(function (CalendarConnection $connection) use ($calendarSyncService, &$totals, &$hasFailure): void {
+            try {
+                $counts = $calendarSyncService->syncConnection($connection);
+            } catch (\Throwable) {
+                $counts = ['failed' => 1, 'outcome' => 'failed'];
+            }
+            $hasFailure = $hasFailure || in_array($counts['outcome'], ['partial', 'failed', 'auth_required'], true);
 
             foreach (['created', 'updated', 'skipped', 'failed'] as $key) {
                 $totals[$key] += $counts[$key] ?? 0;
@@ -48,6 +54,6 @@ class SyncGoogleCalendar extends Command
             $totals['failed'],
         ));
 
-        return self::SUCCESS;
+        return $hasFailure ? self::FAILURE : self::SUCCESS;
     }
 }
