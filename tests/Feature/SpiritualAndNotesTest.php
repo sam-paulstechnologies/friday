@@ -25,6 +25,13 @@ class SpiritualAndNotesTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // These relative-date fixtures need a fixed instant shared by UTC and Dubai.
+        $this->travelTo('2026-10-08 08:00:00 UTC');
+    }
+
     public function test_spiritual_page_loads(): void
     {
         [$user] = $this->context();

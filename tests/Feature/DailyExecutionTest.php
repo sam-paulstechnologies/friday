@@ -23,6 +23,13 @@ class DailyExecutionTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // These relative-date fixtures need a fixed instant shared by UTC and Dubai.
+        $this->travelTo('2026-10-08 08:00:00 UTC');
+    }
+
     public function test_today_page_loads(): void
     {
         [$user] = $this->context();
@@ -366,7 +373,7 @@ class DailyExecutionTest extends TestCase
 
     public function test_slack_parser_maps_done_move_and_note_commands(): void
     {
-        $parser = new SlackCommandParser();
+        $parser = new SlackCommandParser;
 
         $this->assertSame(['done', [2, 3]], [$parser->parse('done 2,3')['action'], $parser->parse('done 2,3')['numbers']]);
         $this->assertSame(['move', [1], 'tomorrow'], [$parser->parse('move 1 tomorrow')['action'], $parser->parse('move 1 tomorrow')['numbers'], $parser->parse('move 1 tomorrow')['date']]);
